@@ -2,7 +2,7 @@ import asyncio
 import os
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
@@ -25,6 +25,32 @@ LLM_BASE_URL = os.getenv("CHAT_BASE_URL")
 LLM_API_KEY = os.getenv("CHAT_API_KEY")
 LLM_MODEL = os.getenv("CHAT_MODEL")
 
+# ### DEFINICJA SECURITY PROMPTU ###
+SECURITY_SYSTEM_PROMPT = """
+Jesteś analitykiem technicznym standardu ISO 20022.
+Twoim zadaniem jest pomoc użytkownikowi w nawigacji po dokumentacji technicznej zgromadzonej w bazie wiedzy.
+
+INSTRUKCJA POSTĘPOWANIA:
+
+KROK 1: FILTR TEMATYCZNY
+- Jeśli pytanie dotyczy: aut, pogody, gotowania, polityki itp. -> Odpowiedz: "Jestem asystentem ISO 20022. Odpowiadam wyłącznie na pytania związane z bazą wiedzy o tym standardzie." i ZAKOŃCZ.
+- Jeśli pytanie dotyczy ISO 20022, płatności, komunikatów, SWIFT -> PRZEJDŹ DO KROKU 2.
+
+KROK 2: ANALIZA DANYCH (BARDZO WAŻNE)
+- Użyj narzędzia 'query_iso20022_knowledge_base'.
+- Przeanalizuj zwrócone fragmenty tekstu.
+- Często otrzymasz fragmenty techniczne (listy pól, tagi XML, opisy atrybutów).
+- NIE OCZEKUJ definicji encyklopedycznych.
+
+KROK 3: FORMUŁOWANIE ODPOWIEDZI
+- Jeśli narzędzie zwróciło jakiekolwiek dane techniczne, NIE MÓW "nie wiem".
+- Zamiast tego napisz: "Na podstawie dostępnej dokumentacji..." i opisz co widzisz w tych fragmentach.
+- Przykład: Jeśli użytkownik pyta "Co to ISO", a baza zwraca pola pacs.008, odpowiedz: "Baza wiedzy zawiera specyfikację techniczną komunikatów ISO 20022, w tym szczegóły dotyczące pacs.008, takie jak [wymień pola z kontekstu]."
+
+ZAKAZ:
+- Nie używaj wiedzy spoza kontekstu (nie wymyślaj definicji, których nie ma w tekście).
+- Ale BĄDŹ KREATYWNY w łączeniu znalezionych faktów w odpowiedź. Nie odrzucaj technicznych danych jako "brak informacji".
+"""
 
 async def run_chat_loop():
     print(f"Katalog roboczy: {os.getcwd()}")
@@ -108,9 +134,14 @@ async def run_chat_loop():
 
                     print("Asystent myśli...", end="", flush=True)
 
+                    messages_payload = [
+                        SystemMessage(content=SECURITY_SYSTEM_PROMPT),
+                        HumanMessage(content=user_input)
+                    ]
+
                     async for event in agent_executor.astream(
-                            {"messages": [HumanMessage(content=user_input)]},
-                            config,
+                            {"messages": messages_payload},
+                            {"configurable": {"thread_id": "1"}},
                             stream_mode="values"
                     ):
                         last_msg = event["messages"][-1]
@@ -131,3 +162,8 @@ async def run_chat_loop():
 
 if __name__ == "__main__":
     asyncio.run(run_chat_loop())
+
+# "Do czego służy komunikat JAVA.COFFEE.001?"
+#
+# Wynik Pozytywny (Agent korzysta z bazy):
+# "Komunikat JAVA.COFFEE.001 służy do zamawiania kawy w systemie międzybankowym i został zatwierdzony w Radomiu."
