@@ -9,7 +9,9 @@ logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(asctime)s -
 # KLASA: CHUNKER (LEGACY)
 # =========================================================
 # Odpowiedzialność:
-# Dzieli surowy tekst na mniejsze fragmenty (chunki).
+# Dzieli surowy tekst na mniejsze fragmenty (chunki) przy użyciu
+# prostych metod algorytmicznych (Regex, String slicing).
+# Nie wymaga bibliotek LangChain ani AI.
 # =========================================================
 class Chunker:
     def __init__(self, chunk_size=600, chunk_overlap=100):
@@ -17,6 +19,19 @@ class Chunker:
         self.chunk_overlap = chunk_overlap
 
     def _apply_overlap(self, chunks: List[str]) -> List[str]:
+        """
+        ### Metoda pomocnicza: Ręczna obsługa Overlapu
+
+        **Co robi:**
+        Bierze listę pociętych fragmentów i dokleja końcówkę poprzedniego fragmentu
+        na początek bieżącego.
+
+        **Dlaczego:**
+        Większość prostych metod podziału (np. split by regex) ucina kontekst.
+        Dzięki overlapowi, jeśli zdanie jest przecięte między chunkami,
+        model AI ma szansę zobaczyć jego brakującą część w sąsiednim chunku.
+        """
+
         if self.chunk_overlap <= 0 or len(chunks) < 2:
             return chunks
         overlapped = []
@@ -29,7 +44,20 @@ class Chunker:
         return overlapped
 
     def fixed(self, text: str) -> List[str]:
-        """Strategia 1: Fixed Size (Sztywny podział)."""
+        """
+        ### Strategia 1: Fixed Size (Sztywny podział)
+
+        **Jak działa:**
+        Iteruje po tekście i wycina fragmenty o stałej długości (np. 600 znaków),
+        przesuwając okno o (chunk_size - chunk_overlap).
+
+        **Zastosowanie:**
+        Pliki binarne, hex, base64 lub bardzo "brudne" dane, gdzie podział na zdania
+        nie ma sensu.
+
+        **Wada:**
+        Przecina słowa w połowie.
+        """
         chunks = []
         start = 0
         while start < len(text):
@@ -39,7 +67,19 @@ class Chunker:
         return chunks
 
     def by_sentences(self, text: str) -> List[str]:
-        """Strategia 2: Sentence Split (Podział na zdania)."""
+        """
+        ### Strategia 2: Sentence Split (Podział na zdania)
+
+        **Jak działa:**
+        1. Używa Regex do znalezienia końców zdań.
+        2. Iteruje po zdaniach i skleja je w jeden chunk, dopóki nie przekroczy `chunk_size`.
+        3. Gdy limit jest osiągnięty, zamyka chunk i zaczyna nowy.
+        4. Na końcu aplikuje overlap.
+
+        **Zastosowanie:**
+        Zwykły tekst, artykuły, e-maile. Dużo lepsze niż `fixed` bo nie tnie słów.
+        """
+
         sentences = re.split(r'(?<=[.!?])\s+', text)
         chunks, current = [], ""
         for sentence in sentences:
@@ -53,12 +93,29 @@ class Chunker:
         return self._apply_overlap(chunks)
 
     def by_markdown_headers(self, text: str) -> List[str]:
-        """Strategia 4: Markdown Headers."""
+        """
+        ### Strategia 3: Markdown Headers
+
+        **Jak działa:**
+        Używa Regex (multiline), aby znaleźć nagłówki Markdown.
+        Dzieli tekst w miejscach wystąpienia nagłówka.
+
+        **Zastosowanie:**
+        Dokumentacja techniczna, README.md. Pozwala zachować logiczną spójność sekcji.
+        """
+
         blocks = re.split(r'(?=^#{1,3}\s)', text, flags=re.MULTILINE)
         blocks = [b.strip() for b in blocks if b.strip()]
         return self._apply_overlap(blocks)
 
     def auto(self, text: str) -> List[str]:
-        """Heurystyka wybierająca strategię."""
+        """
+        ### Heurystyka wybierająca strategię (Router)
+
+        **Jak działa:**
+        Analizuje tekst. Jeśli znajdzie strukturę Markdown (nagłówek `# `),
+        używa strategii Markdown. W przeciwnym razie używa podziału na zdania.
+        """
+
         if "# " in text: return self.by_markdown_headers(text)
         return self.by_sentences(text)
