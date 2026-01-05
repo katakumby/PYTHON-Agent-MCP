@@ -43,6 +43,7 @@ def get_knowledge_base():
     KNOWLEDGE_BASE = SearchKnowledgebase(
         client=client,
         input_directory=os.getenv("INPUT_DIRECTORY"),
+        input_s3_directory=os.getenv("INPUT_S3_DIRECTORY"),
         vector_store=store,
         embedding_model=os.getenv("EMBEDDING_MODEL"),
         chunk_module=chunk_module,

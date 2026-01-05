@@ -1,17 +1,15 @@
-import os
 import logging
-import boto3
+import os
 import tempfile
 import uuid
 from typing import List, Dict, Any, Generator
 
-# Importy z Twojego kodu
+from langchain_community.document_loaders import UnstructuredMarkdownLoader
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import MarkdownHeaderTextSplitter
 from langchain_text_splitters import MarkdownTextSplitter
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_experimental.text_splitter import SemanticChunker
-from langchain_community.document_loaders import UnstructuredMarkdownLoader
-from langchain_openai import OpenAIEmbeddings
+from s3_service import S3Service
 
 logger = logging.getLogger(__name__)
 
@@ -24,70 +22,30 @@ class S3Chunker:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
-        # Konfiguracja AWS / MinIO
-        self.aws_key = os.getenv('S3_AKID') or os.getenv('AWS_ACCESS_KEY_ID')
-        self.aws_secret = os.getenv('S3_SK') or os.getenv('AWS_SECRET_ACCESS_KEY')
-        self.aws_region = os.getenv('AWS_REGION') or os.getenv('S3_REGION') or "eu-north-1"
-        self.s3_endpoint = os.getenv('S3_ENDPOINT')  # <--- NOWA ZMIENNA DLA MINIO
+        # Inicjalizacja serwisu S3 (delegacja połączenia)
+        self.s3_service = S3Service()
 
-        if not self.aws_key or not self.aws_secret:
-            raise RuntimeError("Brak poświadczeń AWS w pliku .env (S3_AKID, S3_SK).")
-
-        self.session = boto3.Session(
-            aws_access_key_id=self.aws_key,
-            aws_secret_access_key=self.aws_secret,
-            region_name=self.aws_region,
-        )
-
-        # Jeśli podano endpoint (MinIO), używamy go. Jeśli nie (AWS), boto3 użyje domyślnego.
-        if self.s3_endpoint:
-            self.s3_client = self.session.client('s3', endpoint_url=self.s3_endpoint)
-            logger.info(f"Połączono z S3 (Local/Custom): {self.s3_endpoint}")
-        else:
-            self.s3_client = self.session.client('s3')
-            logger.info("Połączono z AWS S3")
-
-        # Embeddings... (reszta bez zmian)
+        # Konfiguracja Embeddingów (dla Semantic Chunker)
         self.embeddings = OpenAIEmbeddings(
             model=os.getenv('EMBEDDING_MODEL'),
             base_url=os.getenv('EMBEDDING_BASE_URL'),
             api_key=os.getenv('EMBEDDING_API_KEY'),
             check_embedding_ctx_length=False
         )
+        logger.info(f"S3Chunker initialized. Strategy: {chunk_strategy}")
 
     def list_objects(self) -> Generator[str, None, None]:
-        """Generator zwracający klucze plików z S3"""
-        paginator = self.s3_client.get_paginator('list_objects_v2')
-
-        # Jeśli prefix jest pusty, szukamy w całym buckecie
-        prefix_arg = self.prefix if self.prefix else ""
-
-        for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix_arg):
-            if 'Contents' in page:
-                for obj in page['Contents']:
-                    key = obj['Key']
-                    # Filtrowanie rozszerzeń - dodaj te, które chcesz obsługiwać
-                    # Uwaga: Twoje strategie chunkingu muszą umieć obsłużyć te formaty!
-                    if key.endswith(('.md', '.txt', '.xml', '.xsd', '.json')):
-                        yield key
-
-    def _download_s3_object_to_variable(self, object_key: str) -> str:
-        """Pobiera treść pliku z S3 do pamięci"""
-        response = self.s3_client.get_object(Bucket=self.bucket_name, Key=object_key)
-        data = response["Body"].read()
-        try:
-            return data.decode("utf-8")
-        except UnicodeDecodeError:
-            return data.decode("windows-1252")
+        """Wrapper na metodę z serwisu S3"""
+        return self.s3_service.list_objects(self.bucket_name, self.prefix)
 
     def process_file(self, s3_key: str) -> List[Dict[str, Any]]:
         """
-        Pobiera plik, tnie go wg strategii i zwraca listę słowników z tekstem i metadanymi.
-        Zwraca format: [{'text': str, 'metadata': dict}, ...]
+        Pobiera plik (przez S3Service), tnie go wg strategii i zwraca listę słowników.
         """
-        content = self._download_s3_object_to_variable(s3_key)
+        # 1. Pobranie treści
+        content = self.s3_service.download_text(self.bucket_name, s3_key)
 
-        # 1. Primary Split (Strategie z Twojego kodu)
+        # 2. Wybór strategii cięcia (Primary Split)
         splits = []
         if self.chunk_strategy == "markdownHeaderTextSplitter":
             splits = self._strategy_header_split(content)
@@ -101,8 +59,12 @@ class S3Chunker:
             # Fallback
             splits = self._strategy_header_split(content)
 
-        # 2. Add Metadata (Source file info)
-        key_without_prefix = s3_key.replace(self.prefix, "").lstrip("/")
+        # 3. Dodanie Metadanych (Source file info)
+        # Usuwamy prefix, żeby dostać czystą ścieżkę względną
+        key_without_prefix = s3_key
+        if self.prefix and s3_key.startswith(self.prefix):
+            key_without_prefix = s3_key[len(self.prefix):].lstrip("/")
+
         domain_name = key_without_prefix.split('/')[0] if '/' in key_without_prefix else None
 
         for doc in splits:
@@ -111,17 +73,13 @@ class S3Chunker:
             if domain_name:
                 doc.metadata["domain"] = domain_name
 
-        # 3. Secondary Split (Recursive / MarkdownTextSplitter) jeśli chunk_size > 0
+        # 4. Secondary Split (Jeśli zdefiniowano chunk_size)
         final_documents = splits
         if self.chunk_size > 0:
-            # Dodanie chunk_id przed podziałem
             for doc in splits:
                 doc.metadata["_chunk_id"] = str(uuid.uuid4())
 
-            # W Twoim kodzie było zakomentowane Recursive, ale prosiłeś o dodanie.
-            # Używamy MarkdownTextSplitter jako domyślnego dla markdownów,
-            # ale tu jest opcja użycia RecursiveCharacterTextSplitter.
-
+            # Tu zmienić na RecursiveCharacterTextSplitter jeśli potrzeba
             # text_splitter = RecursiveCharacterTextSplitter(
             #    chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap, separators=["\n\n", "\n", ".", " ", ""]
             # )
@@ -129,7 +87,7 @@ class S3Chunker:
 
             final_documents = text_splitter.split_documents(splits)
 
-        # 4. Konwersja na prosty format dla SearchKnowledgebase
+        # 5. Formatowanie wyniku dla SearchKnowledgebase
         results = []
         for doc in final_documents:
             results.append({
@@ -139,7 +97,7 @@ class S3Chunker:
 
         return results
 
-    # --- Implementacje Strategii ---
+    # --- Strategie Chunkingu ---
 
     def _strategy_header_split(self, text: str):
         headers_to_split_on = [("#", "Header 1"), ("##", "Header 2"), ("###", "Header 3")]
@@ -147,7 +105,6 @@ class S3Chunker:
         return markdown_splitter.split_text(text)
 
     def _strategy_unstructured(self, text: str, mode: str):
-        # Unstructured wymaga pliku, tworzymy temp
         suffix = ".md"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             temp_file.write(text.encode("utf-8"))
@@ -157,7 +114,8 @@ class S3Chunker:
             loader = UnstructuredMarkdownLoader(temp_file_path, mode=mode)
             return loader.load()
         finally:
-            os.remove(temp_file_path)
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
 
     def _strategy_semantic(self, text: str):
         text_splitter = SemanticChunker(

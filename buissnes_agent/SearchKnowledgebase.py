@@ -19,6 +19,7 @@ class SearchKnowledgebase:
             self,
             client: OpenAI,
             input_directory: str,
+            input_s3_directory: str,
             vector_store: QdrantStore,
             embedding_model: str,
             chunk_module: str = "legacy",
@@ -29,6 +30,7 @@ class SearchKnowledgebase:
     ):
         self.client = client
         self.input_directory = input_directory
+        self.input_s3_directory = input_s3_directory
         self.store = vector_store
         self.model = embedding_model
         self.batch_size = batch_size
@@ -50,11 +52,11 @@ class SearchKnowledgebase:
                 raise e
 
             bucket = os.getenv("S3_BUCKET")
-            logger.info(f"CHUNKER: Moduł S3. Bucket: {bucket}, Prefix: {input_directory}, Strategia: {chunk_strategy}")
+            logger.info(f"CHUNKER: Moduł S3. Bucket: {bucket}, Prefix: {input_s3_directory}, Strategia: {chunk_strategy}")
 
             self.chunker_instance = S3Chunker(
                 bucket_name=bucket,
-                prefix=input_directory,
+                prefix=input_s3_directory,
                 chunk_strategy=chunk_strategy,
                 chunk_size=chunk_size,
                 chunk_overlap=100
