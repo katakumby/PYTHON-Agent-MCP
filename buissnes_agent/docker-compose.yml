@@ -1,15 +1,32 @@
 version: '3.8'
 
 services:
+  # --- BAZA WEKTOROWA (QDRANT) ---
   qdrant:
     image: qdrant/qdrant:latest
     container_name: qdrant
     ports:
-      - "6333:6333"  # port API
-      - "6334:6334"  # port gRPC (opcjonalny)
+      - "6333:6333"  # Port API HTTP
+      - "6334:6334"  # Port gRPC
     volumes:
       - qdrant_storage:/qdrant/storage
     restart: unless-stopped
 
+  # --- LOKALNE S3 (MINIO) ---
+  minio:
+    image: minio/minio:latest
+    container_name: local_s3
+    ports:
+      - "9000:9000"  # API S3 (dla Twojego skryptu Python: S3_ENDPOINT)
+      - "9001:9001"  # Konsola administratora (przeglądarka)
+    environment:
+      MINIO_ROOT_USER: minioadmin      # Odpowiednik: AWS_ACCESS_KEY_ID / S3_AKID
+      MINIO_ROOT_PASSWORD: minioadmin  # Odpowiednik: AWS_SECRET_ACCESS_KEY / S3_SK
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
 volumes:
   qdrant_storage:
+  minio_data:
