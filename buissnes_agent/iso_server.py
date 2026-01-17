@@ -114,17 +114,34 @@ async def query_iso20022_knowledge_base(query: str) -> str:
 # ==============================================================================
 
 if __name__ == "__main__":
-    # Próba załadowania ETL (ingestii danych) przy starcie
+    import argparse
+
+    # Próba załadowania ETL
     try:
-        # Import configu uruchamia ETL w tle (SearchKnowledgebase)
-        # UWAGA: Config też może mieć printy, więc importujemy go ostrożnie
         import config
 
         print("[Server] Konfiguracja ETL załadowana.", file=sys.stderr)
     except Exception as e:
-        print(f"[Server] Ostrzeżenie: Nie udało się uruchomić configu ETL: {e}", file=sys.stderr)
+        print(f"[Server] Warning: ETL config error: {e}", file=sys.stderr)
+
+    # Obsługa argumentów (referencja A2A)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--transport", default="stdio", choices=["stdio", "sse"])
+    parser.add_argument("--port", default=8000, type=int)
+    parser.add_argument("--host", default="0.0.0.0")
+
+    # FastMCP przejmuje sys.argv.
+    # jawnie kontrolowanie trybu SSE
+    # Prostsze podejście zgodne z FastMCP:
+    # FastMCP automatycznie wykrywa, czy ma działać jako stdio czy server,
 
     print("Starting ISO20022 RAG MCP Server...", file=sys.stderr)
 
-    # mcp.run() przejmuje stdout do komunikacji JSON.
-    mcp.run()
+    # Aby umożliwić działanie jako serwer HTTP (SSE) dla "prawdziwego" A2A:
+    # Uruchomienie: python iso_server.py --transport sse --port 8000
+
+    # Pobieramy argumenty "ręcznie" tylko po to by zdecydować o metodzie run
+    if "--transport" in sys.argv and "sse" in sys.argv:
+        mcp.run(transport="sse")  # FastMCP nasłuchuje na porcie domyślnym lub z env
+    else:
+        mcp.run(transport="stdio")

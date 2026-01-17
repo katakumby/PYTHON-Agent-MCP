@@ -1,4 +1,3 @@
-
 # ISO 20022 RAG Analyst Agent (MCP Architecture)
 
 Zaawansowany system analityczny wykorzystujący architekturę **MCP (Model Context Protocol)** oraz technikę **RAG (Retrieval-Augmented Generation)**. System służy do analizy dokumentacji technicznej i biznesowej (głównie standard ISO 20022 / CBPR+), działając w oparciu o lokalne modele językowe (np. Hermes 70B) oraz bazę wektorową Qdrant.
@@ -9,7 +8,7 @@ Projekt rozdziela logikę na **Serwer MCP** (udostępniający narzędzia i wiedz
 
 ## Kluczowe Funkcjonalności
 
-*   **Architektura Client-Server (MCP):** Separacja bazy wiedzy od logiki agenta. Serwer udostępnia narzędzia, klient (Agent) z nich korzysta.
+*   **Architektura Client-Server (MCP):** Separacja bazy wiedzy od logiki agenta. Obsługa transportu **STDIO** (lokalnie) oraz **SSE** (HTTP/Sieć).
 *   **Modułowy ETL & Chunking:** Możliwość dynamicznej zmiany strategii podziału tekstu za pomocą `.env`:
     *   *Legacy:* Prosty podział na zdania/paragrafy.
     *   *LangChain Advanced:* `MarkdownHeaderTextSplitter`, `SemanticChunker`, `RecursiveCharacterTextSplitter`.
@@ -22,7 +21,7 @@ Projekt rozdziela logikę na **Serwer MCP** (udostępniający narzędzia i wiedz
 ## Wymagane biblioteki
 
 ```bash
-pip install mcp[cli] uvicorn
+pip install mcp[cli] uvicorn sse-starlette
 pip install langchain langchain-core langchain-openai langchain-qdrant langchain-text-splitters langchain-experimental langchain-community
 pip install langgraph qdrant-client python-dotenv
 pip install httpx pypdf pandas openpyxl python-docx tiktoken scipy
@@ -30,12 +29,11 @@ pip install httpx pypdf pandas openpyxl python-docx tiktoken scipy
 
 ---
 
-## Konfiguracja i Uruchomienie
+## Konfiguracja
 
 ### 1. Baza danych i LLM
 
 1.  **Uruchom Qdrant (Docker Compose):**
-    Upewnij się, że masz plik `docker-compose.yaml`.
     ```bash
     docker compose up -d
     ```
@@ -52,7 +50,6 @@ Stwórz plik `.env` w katalogu głównym:
 # --- QDRANT ---
 QDRANT_API=http://localhost:6333
 QDRANT_API_KEY=
-# Nazwa kolekcji (zmiana nazwy wymusi przeładowanie plików)
 COLLECTION_NAME=iso20022_v1
 INPUT_DIRECTORY=./inputs
 
@@ -68,59 +65,71 @@ CHAT_API_KEY=lm-studio
 CHAT_MODEL=Hermes-4-70B
 
 # --- KONFIGURACJA CHUNKINGU ---
-# "langchain" (nowy moduł) lub "legacy" (stary moduł)
 CHUNKING_MODULE=langchain
-# Strategie: markdown_header, semantic, recursive
 CHUNKING_STRATEGY=markdown_header
 CHUNK_SIZE=600
 ```
 
-### 3. Dane wejściowe
-Umieść swoje pliki (`.pdf`, `.md`, `.txt`, `.docx`) w folderze:
-`./inputs`
-
 ---
 
-## Jak uruchomić?
+## Tryby Uruchamiania (How to Run)
 
-System składa się z dwóch elementów. Klient automatycznie uruchomi serwer w tle, ale warto wiedzieć jak działają.
+System wspiera dwa modele architektury zgodne ze standardem MCP.
+### Opcja 1: Tryb Lokalny (STDIO) – Domyślny
+W tym trybie Klient automatycznie uruchamia Serwer jako podproces w tle. Komunikacja odbywa się przez standardowe wejście/wyjście. Jest to najprostsza metoda do szybkiego testowania ("Zero Config").
 
-### Krok 1: Weryfikacja Serwera (Opcjonalne)
-Możesz uruchomić serwer ręcznie, aby sprawdzić, czy poprawnie indeksuje pliki (ETL):
+1.  Upewnij się, że w pliku `client_for_MCP_test.py` zmienna transportu ustawiona jest na:
+    ```python
+    selected_transport = "stdio"
+    ```
+2.  Uruchom klienta:
+    ```bash
+    python client.py
+    ```
+    *Klient sam zadba o uruchomienie i zamknięcie serwera.*
 
+### Opcja 2: Tryb Sieciowy (A2A / SSE) – Zaawansowany
+Symulacja architektury rozproszonej (Agent-to-Agent). Serwer działa jako niezależna usługa HTTP, a Klient łączy się do niego przez sieć. Pozwala to na hostowanie Agenta i Bazy Wiedzy na różnych maszynach/kontenerach.
+
+**Krok 1: Uruchom Serwer (Terminal 1)**
+Uruchom serwer wskazując transport `sse` oraz port:
 ```bash
-python iso_server.py
+python iso_server.py --transport sse --port 8000
 ```
-*Jeśli zobaczysz "Starting ISO20022 RAG MCP Server...", to znaczy, że baza jest gotowa. Możesz zamknąć ten proces (Ctrl+C).*
+*Serwer rozpocznie nasłuchiwanie na `http://0.0.0.0:8000/sse`.*
 
-### Krok 2: Uruchomienie Klienta (Czat)
-To jest główny punkt wejścia do rozmowy.
-
-```bash
-python client.py
-```
+**Krok 2: Skonfiguruj i Uruchom Klienta (Terminal 2)**
+1.  Edytuj plik `client_for_MCP_test.py` i zmień tryb transportu:
+    ```python
+    selected_transport = "sse"
+    # Upewnij się, że port w funkcji init_session to 8000
+    ```
+2.  Uruchom klienta:
+    ```bash
+    python client_for_MCP_test.py
+    ```
+    *Klient nawiąże połączenie HTTP z działającym serwerem.*
 
 ---
 
 ## Schemat działania (Architecture Flow)
 
-1.  **Użytkownik** zadaje pytanie w `client.py`.
+1.  **Użytkownik** zadaje pytanie w `client_for_MCP_test.py`.
 2.  **Agent (LangGraph)** analizuje pytanie przy użyciu modelu **Hermes-70B**.
 3.  Jeśli pytanie wymaga wiedzy (np. "Co to jest pacs.008?"), Agent decyduje się użyć narzędzia `query_iso20022_knowledge_base`.
-4.  **Klient MCP** wysyła żądanie JSON-RPC do **Serwera MCP** (`iso_server.py`).
+4.  **Klient MCP** wysyła żądanie JSON-RPC do **Serwera MCP** (`iso_server.py`) – albo przez potok STDIO, albo przez HTTP (SSE).
 5.  **Serwer MCP**:
     *   Zamienia pytanie na wektor (korzystając z **Nomic Embeddings**).
     *   Przeszukuje bazę **Qdrant**.
-    *   Zwraca najlepiej dopasowane fragmenty tekstu.
+    *   Zwraca najlepiej dopasowane fragmenty tekstu wraz z metadanymi (źródło pliku).
 6.  **Agent** otrzymuje kontekst i generuje finalną odpowiedź dla użytkownika.
 
 ---
 
 ## Struktura Plików
 
-*   `client.py` - Klient terminalowy (Agent LangGraph), który rozmawia z użytkownikiem.
-*   `iso_server.py` - Serwer MCP. Udostępnia narzędzia RAG, ale nie zawiera logiki decyzyjnej.
+*   `client_for_MCP_test.py` - Klient Agenta LangGraph. Obsługuje logikę decyzyjną i łączy się z serwerem MCP (STDIO/SSE).
+*   `iso_server.py` - Serwer MCP. Udostępnia endpointy i narzędzia RAG. Obsługuje flagi CLI (`--transport`, `--port`).
 *   `SearchKnowledgebase.py` - Logika ETL. Skanuje folder, tnie pliki i wysyła do Qdranta.
-*   `chunk_2.py` - Nowoczesny moduł podziału tekstu (Adapter LangChain).
-*   `chunking.py` - Klasyczny moduł podziału tekstu (Wsteczna kompatybilność).
+*   `chunking_lang_graph.py` - Nowoczesny moduł podziału tekstu (Adapter LangChain).
 *   `config.py` - Ładowanie konfiguracji i inicjalizacja singletonów.
