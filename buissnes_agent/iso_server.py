@@ -91,9 +91,14 @@ async def query_iso20022_knowledge_base(query: str) -> str:
             if not docs:
                 return "No relevant documents found."
 
-            # Logowanie sukcesu
-            print(f"[RAG] Znaleziono {len(docs)} dokumentów.", file=sys.stderr)
-            return "\n\n---\n\n".join([d.page_content for d in docs])
+            # FORMATOWANIE ODPOWIEDZI Z METADANYMI
+            formatted_results = []
+            for i, doc in enumerate(docs, 1):
+                source = doc.metadata.get("source_file", "unknown")
+                # Doklejamy nagłówek źródła do treści, którą widzi LLM
+                formatted_results.append(f"--- DOCUMENT {i} (Source: {source}) ---\n{doc.page_content}")
+
+            return "\n\n".join(formatted_results)
 
         result = await asyncio.to_thread(_sync_search)
         return result

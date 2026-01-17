@@ -3,6 +3,7 @@ import uuid
 from typing import List, Dict, Any
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, PointStruct, Distance, Filter, FieldCondition, MatchValue
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +39,26 @@ class QdrantStore:
     def insert_batch(self, items: List[Dict[str, Any]]):
         if not items: return
         points = []
+
+        """
+        Generuj ID na podstawie treści chunka (hash). Dzięki temu, jeśli chunk się nie zmienił, 
+        nadpisze się w bazie zamiast tworzyć duplikat.
+        """
         for item in items:
-            point_id = str(uuid.uuid4())
+            # Generowanie deterministycznego ID na podstawie treści i nazwy pliku
+            unique_string = f"{item['metadata']['source_file']}_{item['text']}"
+            # Tworzymy hash MD5 jako seed dla UUID
+            point_id = str(uuid.UUID(hex=hashlib.md5(unique_string.encode('utf-8')).hexdigest()))
+
             payload = item["metadata"].copy()
             payload["text"] = item["text"]
             points.append(PointStruct(id=point_id, vector=item["vector"], payload=payload))
+
+        # for item in items:
+        #     point_id = str(uuid.uuid4())
+        #     payload = item["metadata"].copy()
+        #     payload["text"] = item["text"]
+        #     points.append(PointStruct(id=point_id, vector=item["vector"], payload=payload))
 
         try:
             self.client.upsert(collection_name=self.collection_name, points=points)
