@@ -81,7 +81,7 @@ if __name__ == "__main__":
     try:
         cli.head_bucket(Bucket=bucket)
     except:
-        print(f"⚠️  Tworzenie bucketa {bucket}...")
+        print(f"Tworzenie bucketa {bucket}...")
         cli.create_bucket(Bucket=bucket)
 
     upload_recursive(cli, bucket)
