@@ -2,7 +2,7 @@ import sys
 import asyncio
 import logging
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 # IMPORTY LOGIKI NARZĘDZI
 from tools.tool_iso_rag import run_iso_rag
@@ -86,7 +86,7 @@ if __name__ == "__main__":
     # Pozwala to na elastyczne uruchamianie serwera w różnych trybach architektury A2A.
     parser = argparse.ArgumentParser(description="Uruchamia serwer MCP dla Agenta ISO 20022")
 
-    parser.add_argument("--transport", default="stdio", choices=["stdio", "sse"],
+    parser.add_argument("--transport", default="stdio", choices=["stdio", "sse",  "http"],
                         help="Tryb transportu: 'stdio' (lokalny pipe, domyślny) lub 'sse' (HTTP server)")
     parser.add_argument("--port", default=8000, type=int,
                         help="Port nasłuchiwania dla trybu SSE (domyślnie 8000)")
@@ -96,7 +96,7 @@ if __name__ == "__main__":
     # parse_known_args jest bezpieczniejsze niż parse_args, bo FastMCP może używać własnych flag
     args, _ = parser.parse_known_args()
 
-    print(f"Starting ISO20022 RAG MCP Server in mode: {args.transport.upper()}...", file=sys.stderr)
+    print(f"Starting ISO20022 RAG MCP Server in mode: {args.transport.upper()} {args.port} {args.host}...", file=sys.stderr)
 
     # 3. Wybór trybu uruchomienia
     if args.transport == "sse":
@@ -105,6 +105,8 @@ if __name__ == "__main__":
         mcp.host = args.host
         mcp.port = args.port
         mcp.run(transport="sse")
+    elif args.transport == "http":
+        mcp.run(transport="http", host=args.host, port=args.port)
     else:
         # Tryb STDIO: Komunikacja przez standardowe wejście/wyjście.
         # Domyślny tryb dla klientów lokalnych (np. Claude Desktop App lub nasz client.py)
