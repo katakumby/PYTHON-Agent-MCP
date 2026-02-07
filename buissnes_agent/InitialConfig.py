@@ -7,8 +7,6 @@ from openai import OpenAI
 
 from QdrantDatabaseStore import QdrantDatabaseStore
 
-# # Data Source
-
 # Konfiguracja podstawowego logowania
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
@@ -16,7 +14,6 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 KNOWLEDGE_BASE = None
-
 
 def get_knowledge_base():
     """
