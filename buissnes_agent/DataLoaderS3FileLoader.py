@@ -1,12 +1,12 @@
 import logging
 from typing import Dict, Any, Generator, Tuple
 
-from s3_service import S3Service
+from DataLoaderS3Service import DataLoaderS3Service
 
 logger = logging.getLogger(__name__)
 
 
-class S3FileLoader:
+class DataLoaderS3FileLoader:
     """
     Klasa odpowiedzialna za Warstwę Danych: Deleguje pobieranie plików do klasy `S3Service`
     oraz przygotowuje wstępne metadane na podstawie ścieżki pliku.
@@ -17,7 +17,7 @@ class S3FileLoader:
         self.prefix = prefix
 
         # Inicjalizacja serwisu S3 (delegacja połączenia)
-        self.s3_service = S3Service()
+        self.s3_service = DataLoaderS3Service()
         logger.info(f"S3FileLoader initialized. Bucket: {bucket_name}")
 
     def list_objects(self) -> Generator[str, None, None]:

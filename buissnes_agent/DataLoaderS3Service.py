@@ -5,7 +5,7 @@ from typing import Generator
 
 logger = logging.getLogger(__name__)
 
-class S3Service:
+class DataLoaderS3Service:
     def __init__(self):
         # Konfiguracja AWS / MinIO
         self.aws_key = os.getenv('S3_AKID') or os.getenv('AWS_ACCESS_KEY_ID')

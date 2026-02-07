@@ -15,7 +15,7 @@ from langchain_core.documents import Document
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
 
-class ContentChunker:
+class LangChainChunker:
     """
     ### Klasa 2: Warstwa Logiki (Processing Layer)
 

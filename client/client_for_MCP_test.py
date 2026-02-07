@@ -20,7 +20,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv()
 
 # Definiujemy pełną ścieżkę do serwera
-SERVER_SCRIPT_PATH = os.path.join(BASE_DIR, "../buissnes_agent/iso_server.py")
+SERVER_SCRIPT_PATH = os.path.join(BASE_DIR, "../buissnes_agent/MCPServer.py")
 
 # Pobieranie zmiennych LLM
 LLM_BASE_URL = os.getenv("CHAT_BASE_URL")

@@ -4,17 +4,52 @@ import sys
 from typing import List
 
 import numpy as np
+from typing import List, Any, Protocol, Dict, Optional
 from openai import OpenAI
 
-from LocalFileLoader import LocalFileLoader
-from textchunker.ContentChunker import ContentChunker
-# Importy modułów pomocniczych
-from textchunker.chunking_base import Chunker as LegacyChunker
-from vector_store import QdrantStore
-from S3FileLoader import S3FileLoader
+# Data Source
+from DataLoaderLocalFileLoader import DataLoaderLocalFileLoader
+from DataLoaderS3FileLoader import DataLoaderS3FileLoader
+# Chunkings
+from textchunker.LangChainChunker import LangChainChunker
+from textchunker.NoLibChunker import NoLibChunker as LegacyChunker
+# Data base
+# from QdrantDatabaseStore import QdrantDatabaseStore
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
+
+
+# ==============================================================================
+# DEFINICJA INTERFEJSU (KONTRAKTU)
+# ==============================================================================
+# Ten interfejs definiuje wymagania, jakie SearchKnowledgebase stawia bazie danych.
+# Musi pasować do metod zdefiniowanych w QdrantDatabaseStore.
+class VectorStoreInterface(Protocol):
+
+    def count(self) -> int:
+        """Zwraca liczbę wektorów w bazie."""
+        ...
+
+    def insert_batch(self, items: List[Dict[str, Any]]) -> None:
+        """
+        Wstawia paczkę dokumentów.
+        items: Lista słowników zawierających klucze 'text', 'vector', 'metadata'.
+        """
+        ...
+
+    def search(self, query_vector: List[float], limit: int = 3) -> List[Dict]:
+        """
+        Wyszukuje podobne wektory.
+        Zwraca listę wyników (słowniki z 'text' i 'score').
+        """
+        ...
+
+
+# ==============================================================================
+# KLASA ORKIESTRATORA
+# ==============================================================================
+
 
 class SearchKnowledgebase:
     """
@@ -31,7 +66,7 @@ class SearchKnowledgebase:
             client: OpenAI,
             input_directory: str,
             input_s3_directory: str,
-            vector_store: QdrantStore,
+            database_store: VectorStoreInterface,
             embedding_model: str,
             chunk_module: str,
             chunk_strategy: str,
@@ -41,7 +76,7 @@ class SearchKnowledgebase:
             force_refresh: bool = False
     ):
         self.client = client
-        self.store = vector_store
+        self.store = database_store
         self.model = embedding_model
         self.batch_size = batch_size
         self.chunk_module_type = chunk_module
@@ -83,19 +118,19 @@ class SearchKnowledgebase:
         if data_source_type == "s3":
             logger.info(f"DATA LAYER: Wybrano S3 Loader. Bucket: {self.s3_bucket}")
             try:
-                return S3FileLoader(self.s3_bucket, self.input_s3_directory)
+                return DataLoaderS3FileLoader(self.s3_bucket, self.input_s3_directory)
             except ImportError as e:
                 logger.error("Brak zależności dla S3 (boto3/chunking_s3).")
                 raise e
         else:
             logger.info(f"DATA LAYER: Wybrano Local File Loader. Dir: {self.input_directory}")
-            return LocalFileLoader(self.input_directory)
+            return DataLoaderLocalFileLoader(self.input_directory)
 
     def _initialize_chunker(self, chunk_module: str, strategy: str, size: int):
         """Fabryka Chunkerów: Zwraca obiekt do przetwarzania tekstu."""
         if chunk_module in ["langchain"]:
             logger.info(f"LOGIC LAYER: Wybrano ContentChunker. Strategia: {strategy}")
-            return ContentChunker(strategy, size, 100)
+            return LangChainChunker(strategy, size, 100)
         else:
             logger.info("LOGIC LAYER: Wybrano Legacy Chunker.")
             return LegacyChunker(strategy, size, 100)

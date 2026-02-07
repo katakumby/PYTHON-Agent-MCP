@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # - Posiada metody do prostych podziałów algorytmicznych (Regex, String slicing).
 # - Przygotowana do rozszerzenia o metody semantyczne (dzięki inicjalizacji embeddingów).
 # =========================================================
-class Chunker:
+class NoLibChunker:
     def __init__(self, chunk_strategy: str, chunk_size: int = 600, chunk_overlap: int = 100):
         """
         Inicjalizacja Chunkera z wyborem strategii i konfiguracją.

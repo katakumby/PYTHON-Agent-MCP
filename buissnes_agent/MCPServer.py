@@ -71,10 +71,10 @@ if __name__ == "__main__":
     import argparse
 
     # 1. Obsługa procesu ETL (Ingestia Danych)
-    # Próba załadowania pliku config.py, który (w starej architekturze) uruchamiał indeksowanie plików.
+    # Próba załadowania pliku InitialConfig.py, który (w starej architekturze) uruchamiał indeksowanie plików.
     # Jest to opcjonalne, aby serwer działał nawet jeśli ETL się nie powiedzie.
     try:
-        import config
+        import InitialConfig
 
         print("[Server] Konfiguracja ETL załadowana pomyślnie.", file=sys.stderr)
     except ImportError:
@@ -101,7 +101,7 @@ if __name__ == "__main__":
     # 3. Wybór trybu uruchomienia
     if args.transport == "sse":
         # Tryb SSE: Serwer HTTP (np. dla komunikacji między kontenerami Docker)
-        # Uruchomienie: python iso_server.py --transport sse
+        # Uruchomienie: python MCPServer.py --transport sse
         mcp.host = args.host
         mcp.port = args.port
         mcp.run(transport="sse")

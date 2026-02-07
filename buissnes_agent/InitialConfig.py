@@ -5,7 +5,7 @@ import sys
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from vector_store import QdrantStore
+from QdrantDatabaseStore import QdrantDatabaseStore
 
 # Konfiguracja podstawowego logowania
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
@@ -51,7 +51,7 @@ def get_knowledge_base():
         base_url=os.getenv("EMBEDDING_BASE_URL")
     )
 
-    store = QdrantStore(
+    store = QdrantDatabaseStore(
         url=os.getenv("QDRANT_API"),
         api_key=os.getenv("QDRANT_API_KEY"),
         collection_name=os.getenv("COLLECTION_NAME", "knowledgebase"),
@@ -65,7 +65,7 @@ def get_knowledge_base():
         client=client,
         input_directory=os.getenv("INPUT_DIRECTORY", "./data"),
         input_s3_directory=os.getenv("INPUT_S3_DIRECTORY", ""),  # Pusty string jeśli nie używamy S3
-        vector_store=store,
+        database_store=store,
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
         chunk_module=chunk_module,
         chunk_strategy=chunk_strategy,

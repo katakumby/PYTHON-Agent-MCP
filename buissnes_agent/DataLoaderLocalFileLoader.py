@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 # --- Helper Class dla plików lokalnych ---
 # Tworzymy to, aby ujednolicić interfejs. Teraz Local i S3 działają tak samo:
 # mają metodę list_objects() i load_file().
-class LocalFileLoader:
+class DataLoaderLocalFileLoader:
     """
     Pomocnicza klasa adaptera dla plików lokalnych.
     Sprawia, że pliki z dysku wyglądają dla systemu tak samo jak pliki z S3.

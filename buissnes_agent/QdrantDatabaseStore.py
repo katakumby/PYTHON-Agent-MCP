@@ -8,7 +8,7 @@ import hashlib
 logger = logging.getLogger(__name__)
 
 
-class QdrantStore:
+class QdrantDatabaseStore:
     def __init__(self, url: str, api_key: str, collection_name: str, vector_size: int = 1536):
         self.collection_name = collection_name
         self.vector_size = vector_size

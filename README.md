@@ -101,9 +101,9 @@ Symulacja architektury rozproszonej (Agent-to-Agent). Serwer działa jako niezal
 **Krok 1: Uruchom Serwer (Terminal 1)**
 Uruchom serwer wskazując transport `sse` oraz port:
 ```bash
-python buissnes_agent/iso_server.py --transport sse --port 8000
+python buissnes_agent/MCPServer.py --transport sse --port 8000
 # lub
-uv run buissnes_agent/iso_server.py --transport sse --port 8000
+uv run buissnes_agent/MCPServer.py --transport sse --port 8000
 
 ```
 *Serwer rozpocznie nasłuchiwanie na `http://0.0.0.0:8000/sse`.*
