@@ -1,22 +1,62 @@
 import logging
 import re
 import sys
+import os
 from typing import List
 
+# Dodano import niezbędny do obsługi strategii semanticChunker w __init__
+try:
+    from langchain_openai import OpenAIEmbeddings
+except ImportError:
+    # Fallback, aby kod nie wywalił się przy imporcie, jeśli ktoś nie ma langchain
+    OpenAIEmbeddings = None
+
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 
 # =========================================================
-# KLASA: CHUNKER (LEGACY)
+# KLASA: CHUNKER (LEGACY / BASE)
 # =========================================================
 # Odpowiedzialność:
-# Dzieli surowy tekst na mniejsze fragmenty (chunki) przy użyciu
-# prostych metod algorytmicznych (Regex, String slicing).
-# Nie wymaga bibliotek LangChain ani AI.
+# Dzieli surowy tekst na mniejsze fragmenty (chunki).
+#
+# Wersja zaktualizowana:
+# - Obsługuje konfigurację strategii w __init__.
+# - Posiada metody do prostych podziałów algorytmicznych (Regex, String slicing).
+# - Przygotowana do rozszerzenia o metody semantyczne (dzięki inicjalizacji embeddingów).
 # =========================================================
 class Chunker:
-    def __init__(self, chunk_size=600, chunk_overlap=100):
+    def __init__(self, chunk_strategy: str, chunk_size: int = 600, chunk_overlap: int = 100):
+        """
+        Inicjalizacja Chunkera z wyborem strategii i konfiguracją.
+
+        Args:
+            chunk_strategy (str): Nazwa strategii (np. 'auto', 'recursive', 'semanticChunker').
+            chunk_size (int): Maksymalna długość fragmentu (w znakach).
+            chunk_overlap (int): Liczba znaków nakładania się fragmentów (kontekst).
+        """
+        self.chunk_strategy = chunk_strategy
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+
+        # Konfiguracja Embeddingów (Inicjalizowana tylko gdy wymagana przez strategię semantic)
+        # Pozwala to oszczędzić zasoby (pamięć/czas), jeśli używamy prostych strategii mechanicznych.
+        self.embeddings = None
+
+        if self.chunk_strategy == "semanticChunker":
+            if OpenAIEmbeddings is None:
+                logger.error("Brak biblioteki langchain_openai! Nie można użyć strategii semanticChunker.")
+            else:
+                self.embeddings = OpenAIEmbeddings(
+                    model=os.getenv('EMBEDDING_MODEL'),
+                    base_url=os.getenv('EMBEDDING_BASE_URL'),
+                    api_key=os.getenv('EMBEDDING_API_KEY'),
+                    check_embedding_ctx_length=False
+                )
+
+        logger.info(
+            f"Chunker initialized. Strategy: {chunk_strategy}, Max Chunk Size: {chunk_size}, Overlap: {chunk_overlap}")
 
     def _apply_overlap(self, chunks: List[str]) -> List[str]:
         """
@@ -39,6 +79,7 @@ class Chunker:
             if i == 0:
                 overlapped.append(chunk)
             else:
+                # Pobieramy końcówkę poprzedniego chunka
                 overlap = chunks[i - 1][-self.chunk_overlap:]
                 overlapped.append(overlap + " " + chunk)
         return overlapped
@@ -53,10 +94,10 @@ class Chunker:
 
         **Zastosowanie:**
         Pliki binarne, hex, base64 lub bardzo "brudne" dane, gdzie podział na zdania
-        nie ma sensu.
+        nie ma sensu lub jest niemożliwy.
 
         **Wada:**
-        Przecina słowa w połowie.
+        Przecina słowa w połowie, co może utrudnić zrozumienie przez LLM.
         """
         chunks = []
         start = 0
@@ -71,10 +112,10 @@ class Chunker:
         ### Strategia 2: Sentence Split (Podział na zdania)
 
         **Jak działa:**
-        1. Używa Regex do znalezienia końców zdań.
+        1. Używa Regex do znalezienia końców zdań (.!?).
         2. Iteruje po zdaniach i skleja je w jeden chunk, dopóki nie przekroczy `chunk_size`.
         3. Gdy limit jest osiągnięty, zamyka chunk i zaczyna nowy.
-        4. Na końcu aplikuje overlap.
+        4. Na końcu aplikuje overlap za pomocą `_apply_overlap`.
 
         **Zastosowanie:**
         Zwykły tekst, artykuły, e-maile. Dużo lepsze niż `fixed` bo nie tnie słów.
@@ -94,10 +135,10 @@ class Chunker:
 
     def by_markdown_headers(self, text: str) -> List[str]:
         """
-        ### Strategia 3: Markdown Headers
+        ### Strategia 3: Markdown Headers (Regex)
 
         **Jak działa:**
-        Używa Regex (multiline), aby znaleźć nagłówki Markdown.
+        Używa Regex (multiline), aby znaleźć nagłówki Markdown (#, ##, ###).
         Dzieli tekst w miejscach wystąpienia nagłówka.
 
         **Zastosowanie:**
@@ -115,6 +156,7 @@ class Chunker:
         **Jak działa:**
         Analizuje tekst. Jeśli znajdzie strukturę Markdown (nagłówek `# `),
         używa strategii Markdown. W przeciwnym razie używa podziału na zdania.
+        To domyślna metoda, jeśli strategia to 'auto'.
         """
 
         if "# " in text: return self.by_markdown_headers(text)
