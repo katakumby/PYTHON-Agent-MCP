@@ -1,20 +1,19 @@
 import logging
 import os
 import sys
-from typing import List
+from typing import Protocol, List
+from typing import Dict, Any, Generator, Tuple
 
 import numpy as np
-from typing import List, Any, Protocol, Dict, Optional
 from openai import OpenAI
 
-# Data Source
-from DataLoaderLocalFileLoader import DataLoaderLocalFileLoader
-from DataLoaderS3FileLoader import DataLoaderS3FileLoader
+#
+# # Data Source
+# from DataLoaderLocalFileLoader import DataLoaderLocalFileLoader
+# from DataLoaderS3FileLoader import DataLoaderS3FileLoader
 # Chunkings
 from textchunker.LangChainChunker import LangChainChunker
 from textchunker.NoLibChunker import NoLibChunker as LegacyChunker
-# Data base
-# from QdrantDatabaseStore import QdrantDatabaseStore
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
@@ -47,6 +46,30 @@ class VectorStoreInterface(Protocol):
 
 
 # ==============================================================================
+# INTERFEJS 2: ŹRÓDŁO DANYCH (Data Loader)
+# ==============================================================================
+class DataLoaderInterface(Protocol):
+    """
+    Abstrakcja źródła danych.
+    Ujednolica sposób pobierania plików z S3 (DataLoaderS3FileLoader)
+    oraz z dysku lokalnego (DataLoaderLocalFileLoader).
+    """
+
+    def list_objects(self) -> Generator[str, None, None]:
+        """
+        Zwraca generator kluczy/ścieżek do plików.
+        """
+        ...
+
+    def load_file_with_metadata(self, key: str) -> Tuple[str, Dict[str, Any]]:
+        """
+        Pobiera treść pliku i jego metadane na podstawie klucza.
+        Returns: (raw_text, metadata_dict)
+        """
+        ...
+
+
+# ==============================================================================
 # KLASA ORKIESTRATORA
 # ==============================================================================
 
@@ -64,13 +87,11 @@ class SearchKnowledgebase:
     def __init__(
             self,
             client: OpenAI,
-            input_directory: str,
-            input_s3_directory: str,
             database_store: VectorStoreInterface,
+            data_loader: DataLoaderInterface,
             embedding_model: str,
             chunk_module: str,
             chunk_strategy: str,
-            data_source_type: str,
             chunk_size: int = 600,
             batch_size: int = 50,
             force_refresh: bool = False
@@ -80,29 +101,17 @@ class SearchKnowledgebase:
         self.model = embedding_model
         self.batch_size = batch_size
         self.chunk_module_type = chunk_module
-        self.data_source_type = data_source_type
-
-        # Konfiguracja ścieżek
-        self.input_directory = input_directory
-        self.input_s3_directory = input_s3_directory
-        self.s3_bucket = os.getenv("S3_BUCKET")
+        self.data_loader = data_loader
 
         # ======================================================================
-        # ETAP 1: Inicjalizacja Warstwy Danych (Loader Strategy)
-        # ======================================================================
-        # Decydujemy, czy dane będą płynąć z S3 czy z dysku lokalnego.
-        # Wynikiem jest obiekt `self.data_loader`, który ma zawsze te same metody.
-        self.data_loader = self._initialize_loader(data_source_type)
-
-        # ======================================================================
-        # ETAP 2: Inicjalizacja Warstwy Logiki (Chunking Strategy)
+        # ETAP 1: Inicjalizacja Warstwy Logiki (Chunking Strategy)
         # ======================================================================
         # Decydujemy, jaki silnik będzie ciął tekst.
         # Wynikiem jest obiekt `self.chunker_engine`.
         self.chunker_engine = self._initialize_chunker(chunk_module, chunk_strategy, chunk_size)
 
         # ======================================================================
-        # ETAP 3: Weryfikacja i Uruchomienie
+        # ETAP 2: Weryfikacja i Uruchomienie
         # ======================================================================
         count = self.store.count()
         logger.info(f"Stan bazy wektorowej: {count} dokumentów.")
@@ -112,19 +121,6 @@ class SearchKnowledgebase:
         else:
             logger.info("START: Uruchamianie jednolitego procesu ETL...")
             self.perform_ingestion()
-
-    def _initialize_loader(self, data_source_type: str):
-        """Fabryka Loaderów: Zwraca obiekt do pobierania danych (S3 lub Local)."""
-        if data_source_type == "s3":
-            logger.info(f"DATA LAYER: Wybrano S3 Loader. Bucket: {self.s3_bucket}")
-            try:
-                return DataLoaderS3FileLoader(self.s3_bucket, self.input_s3_directory)
-            except ImportError as e:
-                logger.error("Brak zależności dla S3 (boto3/chunking_s3).")
-                raise e
-        else:
-            logger.info(f"DATA LAYER: Wybrano Local File Loader. Dir: {self.input_directory}")
-            return DataLoaderLocalFileLoader(self.input_directory)
 
     def _initialize_chunker(self, chunk_module: str, strategy: str, size: int):
         """Fabryka Chunkerów: Zwraca obiekt do przetwarzania tekstu."""

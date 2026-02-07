@@ -7,6 +7,8 @@ from openai import OpenAI
 
 from QdrantDatabaseStore import QdrantDatabaseStore
 
+# # Data Source
+
 # Konfiguracja podstawowego logowania
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
@@ -45,6 +47,32 @@ def get_knowledge_base():
     except ValueError:
         emb_dim = 1536
 
+    # =========================================================
+    # DYNAMICZNY IMPORT LOADERA (Warstwa Danych)
+    # =========================================================
+    # Importujemy klasę dopiero tutaj, wewnątrz IF-a.
+    # Dzięki temu nie musimy mieć boto3, jeśli używamy 'local'.
+
+    data_loader = None
+
+    if data_source == "s3":
+        logger.info("Dynamic Import: Ładowanie modułu S3...")
+        # Import wewnątrz funkcji!
+        from DataLoaderS3FileLoader import DataLoaderS3FileLoader
+
+        data_loader = DataLoaderS3FileLoader(
+            bucket_name=os.getenv("S3_BUCKET"),
+            prefix=os.getenv("INPUT_S3_DIRECTORY", "")
+        )
+    else:
+        logger.info("Dynamic Import: Ładowanie modułu LocalFile...")
+        # Import wewnątrz funkcji!
+        from DataLoaderLocalFileLoader import DataLoaderLocalFileLoader
+
+        data_loader = DataLoaderLocalFileLoader(
+            directory=os.getenv("INPUT_DIRECTORY", "./data")
+        )
+
     # 3. Inicjalizacja Klientów
     client = OpenAI(
         api_key=os.getenv("EMBEDDING_API_KEY"),
@@ -63,13 +91,11 @@ def get_knowledge_base():
     # 4. Instancjalizacja Głównego Orkiestratora
     KNOWLEDGE_BASE = SearchKnowledgebase(
         client=client,
-        input_directory=os.getenv("INPUT_DIRECTORY", "./data"),
-        input_s3_directory=os.getenv("INPUT_S3_DIRECTORY", ""),  # Pusty string jeśli nie używamy S3
         database_store=store,
+        data_loader=data_loader,
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
         chunk_module=chunk_module,
         chunk_strategy=chunk_strategy,
-        data_source_type=data_source,
         chunk_size=chunk_size,
         force_refresh=False  # Ustaw True w .env lub tutaj, aby wymusić przeładowanie bazy
     )
