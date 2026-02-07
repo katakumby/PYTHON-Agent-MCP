@@ -20,11 +20,18 @@ Projekt rozdziela logikę na **Serwer MCP** (udostępniający narzędzia i wiedz
 
 ## Wymagane biblioteki
 
+Bez uv
 ```bash
 pip install mcp[cli] uvicorn sse-starlette
 pip install langchain langchain-core langchain-openai langchain-qdrant langchain-text-splitters langchain-experimental langchain-community
 pip install langgraph qdrant-client python-dotenv
 pip install httpx pypdf pandas openpyxl python-docx tiktoken scipy
+pip install wikipedia atlassian-python-api fastmcp
+```
+
+Z użyciem uv
+```bash
+uv sync
 ```
 
 ---
@@ -94,7 +101,10 @@ Symulacja architektury rozproszonej (Agent-to-Agent). Serwer działa jako niezal
 **Krok 1: Uruchom Serwer (Terminal 1)**
 Uruchom serwer wskazując transport `sse` oraz port:
 ```bash
-python iso_server.py --transport sse --port 8000
+python buissnes_agent/iso_server.py --transport sse --port 8000
+# lub
+uv run buissnes_agent/iso_server.py --transport sse --port 8000
+
 ```
 *Serwer rozpocznie nasłuchiwanie na `http://0.0.0.0:8000/sse`.*
 
@@ -102,7 +112,7 @@ python iso_server.py --transport sse --port 8000
 1.  Edytuj plik `client_for_MCP_test.py` i zmień tryb transportu:
     ```python
     selected_transport = "sse"
-    # Upewnij się, że port w funkcji init_session to 8000
+    # Upewnij się, że port w funkcji init_session to 10000
     ```
 2.  Uruchom klienta:
     ```bash
