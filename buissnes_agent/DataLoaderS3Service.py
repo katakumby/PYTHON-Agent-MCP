@@ -5,6 +5,9 @@ from typing import Generator
 
 logger = logging.getLogger(__name__)
 
+# Pobierz string z env i zamień na listę
+extensions_env = os.getenv("ALLOWED_EXTENSIONS")
+
 class DataLoaderS3Service:
     def __init__(self):
         # Konfiguracja AWS / MinIO
@@ -31,7 +34,9 @@ class DataLoaderS3Service:
             logger.info("S3Service: Połączono z AWS S3")
 
     def list_objects(self, bucket_name: str, prefix: str = "") -> Generator[str, None, None]:
-        """Generator zwracający klucze plików z S3 pasujące do rozszerzeń"""
+        """
+        Generator zwracający klucze plików z S3 pasujące do rozszerzeń
+        """
         paginator = self.s3_client.get_paginator('list_objects_v2')
         prefix_arg = prefix if prefix else ""
 
@@ -41,14 +46,16 @@ class DataLoaderS3Service:
                     for obj in page['Contents']:
                         key = obj['Key']
                         # Filtrowanie obsługiwanych formatów tekstowych
-                        if key.endswith(('.md', '.txt', '.xml', '.xsd', '.json')):
+                        if key.endswith(tuple(extensions_env)):
                             yield key
         except Exception as e:
             logger.error(f"S3Service Error listing objects: {e}")
             raise e
 
     def download_text(self, bucket_name: str, object_key: str) -> str:
-        """Pobiera treść pliku i dekoduje ją do stringa"""
+        """
+        Pobiera treść pliku i dekoduje ją do stringa
+        """
         try:
             response = self.s3_client.get_object(Bucket=bucket_name, Key=object_key)
             data = response["Body"].read()

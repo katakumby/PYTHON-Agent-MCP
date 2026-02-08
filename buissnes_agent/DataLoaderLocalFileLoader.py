@@ -6,6 +6,9 @@ from typing import Generator, Tuple, Dict, Any
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
 
+# Pobierz string z env i zamień na listę
+extensions_env = os.getenv("ALLOWED_EXTENSIONS")
+
 # --- Helper Class dla plików lokalnych ---
 # Tworzymy to, aby ujednolicić interfejs. Teraz Local i S3 działają tak samo:
 # mają metodę list_objects() i load_file().
@@ -28,7 +31,7 @@ class DataLoaderLocalFileLoader:
             for file in files:
                 # Filtracja rozszerzeń
                 ext = os.path.splitext(file)[1].lower()
-                if ext in [".md", ".txt", ".xml", ".xsd"]:
+                if ext in extensions_env:
                     yield os.path.join(root, file)
 
     def load_file_with_metadata(self, file_path: str) -> Tuple[str, Dict[str, Any]]:
