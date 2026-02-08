@@ -8,8 +8,8 @@ import numpy as np
 from openai import OpenAI
 
 # Chunkings
-from textchunker.LangChainChunker import LangChainChunker
-from textchunker.NoLibChunker import NoLibChunker as LegacyChunker
+from buissnes_agent.textchunker.langchain.LangChainChunker import LangChainChunker
+from buissnes_agent.textchunker.noLibChunker.NoLibChunker import NoLibChunker as LegacyChunker
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
