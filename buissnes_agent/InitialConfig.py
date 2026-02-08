@@ -28,8 +28,6 @@ def get_knowledge_base():
     from SearchKnowledgebase import SearchKnowledgebase
 
     # 1. Konfiguracja Chunkera
-    chunk_module = os.getenv("CHUNKING_MODULE")  # domyślnie legacy
-    chunk_strategy = os.getenv("CHUNKING_STRATEGY")  # domyślnie auto
     data_source = os.getenv("DATA_SOURCE")  # domyślnie auto
 
     try:
@@ -83,17 +81,12 @@ def get_knowledge_base():
         vector_size=emb_dim
     )
 
-    logger.info(f"Initializing KnowledgeBase. Module: {chunk_module}, Strategy: {chunk_strategy}")
-
     # 4. Instancjalizacja Głównego Orkiestratora
     KNOWLEDGE_BASE = SearchKnowledgebase(
         client=client,
         database_store=store,
         data_loader=data_loader,
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
-        chunk_module=chunk_module,
-        chunk_strategy=chunk_strategy,
-        chunk_size=chunk_size,
         force_refresh=False  # Ustaw True w .env lub tutaj, aby wymusić przeładowanie bazy
     )
     return KNOWLEDGE_BASE

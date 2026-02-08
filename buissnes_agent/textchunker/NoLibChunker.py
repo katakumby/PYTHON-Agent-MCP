@@ -20,11 +20,6 @@ logger = logging.getLogger(__name__)
 # =========================================================
 # Odpowiedzialność:
 # Dzieli surowy tekst na mniejsze fragmenty (chunki).
-#
-# Wersja zaktualizowana:
-# - Obsługuje konfigurację strategii w __init__.
-# - Posiada metody do prostych podziałów algorytmicznych (Regex, String slicing).
-# - Przygotowana do rozszerzenia o metody semantyczne (dzięki inicjalizacji embeddingów).
 # =========================================================
 class NoLibChunker:
     def __init__(self, chunk_strategy: str, chunk_size: int = 600, chunk_overlap: int = 100):
@@ -39,9 +34,6 @@ class NoLibChunker:
         self.chunk_strategy = chunk_strategy
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-
-        # Konfiguracja Embeddingów (Inicjalizowana tylko gdy wymagana przez strategię semantic)
-        # Pozwala to oszczędzić zasoby (pamięć/czas), jeśli używamy prostych strategii mechanicznych.
         self.embeddings = None
 
         if self.chunk_strategy == "semanticChunker":

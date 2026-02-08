@@ -1,16 +1,12 @@
 import logging
 import os
 import sys
-from typing import Protocol, List
 from typing import Dict, Any, Generator, Tuple
+from typing import Protocol, List
 
 import numpy as np
 from openai import OpenAI
 
-#
-# # Data Source
-# from DataLoaderLocalFileLoader import DataLoaderLocalFileLoader
-# from DataLoaderS3FileLoader import DataLoaderS3FileLoader
 # Chunkings
 from textchunker.LangChainChunker import LangChainChunker
 from textchunker.NoLibChunker import NoLibChunker as LegacyChunker
@@ -23,7 +19,7 @@ logger = logging.getLogger(__name__)
 # DEFINICJA INTERFEJSU (KONTRAKTU)
 # ==============================================================================
 # Ten interfejs definiuje wymagania, jakie SearchKnowledgebase stawia bazie danych.
-# Musi pasować do metod zdefiniowanych w QdrantDatabaseStore.
+# Musi pasować do metod zdefiniowanych w danym pliku bazy danych.
 class VectorStoreInterface(Protocol):
 
     def count(self) -> int:
@@ -76,7 +72,7 @@ class DataLoaderInterface(Protocol):
 
 class SearchKnowledgebase:
     """
-    ### Klasa Orkiestrator (Coordinator Class) - Wersja Zrefaktoryzowana
+    ### Klasa Orkiestrator (Coordinator Class)
 
     Realizuje proces w 3 krokach:
     1. **Setup Danych:** Wybór odpowiedniego Loadera (S3 lub Local).
@@ -90,9 +86,6 @@ class SearchKnowledgebase:
             database_store: VectorStoreInterface,
             data_loader: DataLoaderInterface,
             embedding_model: str,
-            chunk_module: str,
-            chunk_strategy: str,
-            chunk_size: int = 600,
             batch_size: int = 50,
             force_refresh: bool = False
     ):
@@ -100,18 +93,10 @@ class SearchKnowledgebase:
         self.store = database_store
         self.model = embedding_model
         self.batch_size = batch_size
-        self.chunk_module_type = chunk_module
         self.data_loader = data_loader
 
         # ======================================================================
-        # ETAP 1: Inicjalizacja Warstwy Logiki (Chunking Strategy)
-        # ======================================================================
-        # Decydujemy, jaki silnik będzie ciął tekst.
-        # Wynikiem jest obiekt `self.chunker_engine`.
-        self.chunker_engine = self._initialize_chunker(chunk_module, chunk_strategy, chunk_size)
-
-        # ======================================================================
-        # ETAP 2: Weryfikacja i Uruchomienie
+        # ETAP Weryfikacja i Uruchomienie
         # ======================================================================
         count = self.store.count()
         logger.info(f"Stan bazy wektorowej: {count} dokumentów.")
@@ -122,17 +107,8 @@ class SearchKnowledgebase:
             logger.info("START: Uruchamianie jednolitego procesu ETL...")
             self.perform_ingestion()
 
-    def _initialize_chunker(self, chunk_module: str, strategy: str, size: int):
-        """Fabryka Chunkerów: Zwraca obiekt do przetwarzania tekstu."""
-        if chunk_module in ["langchain"]:
-            logger.info(f"LOGIC LAYER: Wybrano ContentChunker. Strategia: {strategy}")
-            return LangChainChunker(strategy, size, 100)
-        else:
-            logger.info("LOGIC LAYER: Wybrano Legacy Chunker.")
-            return LegacyChunker(strategy, size, 100)
-
     def _embed(self, text: str) -> List[float]:
-        """Wrapper na API OpenAI."""
+        # Wrapper na API OpenAI.
         try:
             emb = self.client.embeddings.create(input=[text.replace("\n", " ")], model=self.model)
             return np.array(emb.data[0].embedding, dtype=np.float32)
@@ -162,50 +138,15 @@ class SearchKnowledgebase:
                 # Loader zwraca surowy tekst i metadane pliku
                 raw_text, file_metadata = self.data_loader.load_file_with_metadata(object_key)
 
-                if not raw_text.strip():
+                if not raw_text or not raw_text.strip():
                     continue
 
                 # 3. CHUNKING (Transform)
-                # Normalizacja wyników, bo LegacyChunker zwraca list[str], a ContentChunker list[dict]
-                processed_chunks = []
-
-                if isinstance(self.chunker_engine, LegacyChunker):
-                    # Obsługa starego chunkera
-                    ext = os.path.splitext(object_key)[1].lower()
-                    raw_list = []
-                    if ext in [".xml", ".xsd"]:
-                        raw_list = self.chunker_engine.fixed(raw_text)
-                    else:
-                        raw_list = self.chunker_engine.auto(raw_text)
-
-                    # Konwersja do formatu słownikowego
-                    for txt in raw_list:
-                        processed_chunks.append({
-                            "text": txt,
-                            "metadata": file_metadata
-                        })
-                else:
-                    # Obsługa nowego ContentChunker (S3/LangChain)
-                    # ContentChunker sam dba o merge metadanych
-                    processed_chunks = self.chunker_engine.process_content(raw_text, file_metadata)
+                processed_chunks = self._transform_to_chunks(object_key, raw_text, file_metadata)
 
                 # 4. EMBEDDING & BATCHING (Load)
-                for item in processed_chunks:
-                    text_content = item["text"]
-                    metadata = item["metadata"]
-
-                    vec = self._embed(text_content)
-
-                    batch_items.append({
-                        "text": text_content,
-                        "vector": vec.tolist(),
-                        "metadata": metadata
-                    })
-
-                    # Wysłanie paczki
-                    if len(batch_items) >= self.batch_size:
-                        self.store.insert_batch(batch_items)
-                        batch_items = []
+                # Przekazujemy batch_items przez referencję (lista jest mutowalna)
+                self._embed_and_queue_batch(processed_chunks, batch_items)
 
                 files_processed += 1
 
@@ -218,3 +159,181 @@ class SearchKnowledgebase:
             self.store.insert_batch(batch_items)
 
         logger.info(f"PROCES ZAKOŃCZONY. Przetworzono plików: {files_processed}")
+
+    def _transform_to_chunks(self, object_key: str, raw_text: str, file_metadata: dict) -> list[dict]:
+        """
+        Transformuje surowy tekst na listę chunków ze zunifikowanymi metadanymi.
+        Obsługuje zarówno LegacyChunker jak i nowe podejście.
+        """
+        processed_chunks = []
+
+        chunk_module = os.getenv("CHUNKING_MODULE")
+
+        ext = os.path.splitext(object_key)[1].lower()
+
+        if chunk_module in ["langchain"]:
+
+            # Pobranie dedykowanej konfiguracji (Size, Overlap, Strategy)
+            chunk_size, chunk_overlap, strategy = self._get_chunk_config_langchain(ext)
+            print(f"Plik: {ext}, Chunk: {chunk_size}, Strategia: {strategy}")
+
+            logger.info(f"LOGIC LAYER: Wybrano ContentChunker. Strategia: {strategy}")
+            chunker_engine = LangChainChunker(strategy, chunk_size, chunk_overlap)
+            processed_chunks = chunker_engine.process_content(raw_text, file_metadata)
+        else:
+
+            # Pobranie dedykowanej konfiguracji (Size, Overlap, Strategy)
+            chunk_size, chunk_overlap, strategy = self._get_chunk_config_local(ext)
+            print(f"Plik: {ext}, Chunk: {chunk_size}, Strategia: {strategy}")
+
+            logger.info("LOGIC LAYER: Wybrano Legacy Chunker.")
+            chunker_engine = LegacyChunker(strategy, chunk_size, chunk_overlap)
+
+            if ext in [".xml", ".xsd"]:
+                raw_list = chunker_engine.fixed(raw_text)
+            else:
+                raw_list = chunker_engine.auto(raw_text)
+
+            # Konwersja do formatu słownikowego
+            for txt in raw_list:
+                processed_chunks.append({
+                    "text": txt,
+                    "metadata": file_metadata
+                })
+
+        return processed_chunks
+
+    def _embed_and_queue_batch(self, processed_chunks: list[dict], batch_items: list[dict]) -> None:
+        """
+        Generuje embeddingi dla chunków i dodaje je do kolejki (batch).
+        Jeśli kolejka osiągnie limit, wysyła dane do bazy i czyści kolejkę.
+
+        UWAGA: batch_items jest modyfikowane w miejscu (in-place).
+        """
+        for item in processed_chunks:
+            text_content = item["text"]
+            metadata = item["metadata"]
+
+            # Generowanie wektora
+            vec = self._embed(text_content)
+
+            batch_items.append({
+                "text": text_content,
+                "vector": vec.tolist(),
+                "metadata": metadata
+            })
+
+            # Sprawdzenie wielkości paczki i wysyłka
+            if len(batch_items) >= self.batch_size:
+                self.store.insert_batch(batch_items)
+                batch_items.clear()  # Czyścimy listę, co wpływa na zmienną w głównej funkcji
+
+    def _get_chunk_config_langchain(self, ext: str) -> tuple[int, int, str]:
+        """
+        Pomocnicza metoda dobierająca parametry chunkowania na podstawie rozszerzenia.
+        Zwraca (chunk_size, chunk_overlap, strategy).
+        """
+
+        match ext:
+            case ".xml":
+                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_XML"))
+                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_XML"))
+                strategy = os.getenv("LANGCHAIN_STRATEGY_XML")
+
+            case ".xsd":
+                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_XSD"))
+                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_XSD"))
+                strategy = os.getenv("LANGCHAIN_STRATEGY_XSD")
+
+            case ".json":
+                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_JSON"))
+                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_JSON"))
+                strategy = os.getenv("LANGCHAIN_STRATEGY_JSON")
+
+            case ".txt":
+                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_TXT"))
+                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_TXT"))
+                strategy = os.getenv("LANGCHAIN_STRATEGY_TXT")
+
+            case ".md":
+                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_MD"))
+                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_MD"))
+                strategy = os.getenv("LANGCHAIN_STRATEGY_MD")
+
+            case ".pdf":
+                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_PDF"))
+                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_PDF"))
+                strategy = os.getenv("LANGCHAIN_STRATEGY_PDF")
+
+            case ".docx":
+                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_DOCX"))
+                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_DOCX"))
+                strategy = os.getenv("LANGCHAIN_STRATEGY_DOCX")
+
+            case ".xlsx":
+                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_XLSX"))
+                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_XLSX"))
+                strategy = os.getenv("LANGCHAIN_STRATEGY_XLSX")
+
+            case _:
+                # Domyślne ustawienia dla nieznanych plików (Fallback do zmiennych globalnych)
+                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_DEF"))
+                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_DEF"))
+                strategy = os.getenv("LANGCHAIN_STRATEGY_DEF")
+
+        return chunk_size, chunk_overlap, strategy
+
+    def _get_chunk_config_local(self, ext: str) -> tuple[int, int, str]:
+        """
+        Pomocnicza metoda dobierająca parametry chunkowania na podstawie rozszerzenia.
+        Zwraca (chunk_size, chunk_overlap, strategy).
+        """
+
+        match ext:
+            case ".xml":
+                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_XML"))
+                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_XML"))
+                strategy = os.getenv("LOCAL_STRATEGY_XML")
+
+            case ".xsd":
+                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_XSD"))
+                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_XSD"))
+                strategy = os.getenv("LOCAL_STRATEGY_XSD")
+
+            case ".json":
+                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_JSON"))
+                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_JSON"))
+                strategy = os.getenv("LOCAL_STRATEGY_JSON")
+
+            case ".txt":
+                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_TXT"))
+                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_TXT"))
+                strategy = os.getenv("LOCAL_STRATEGY_TXT")
+
+            case ".md":
+                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_MD"))
+                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_MD"))
+                strategy = os.getenv("LOCAL_STRATEGY_MD")
+
+            case ".pdf":
+                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_PDF"))
+                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_PDF"))
+                strategy = os.getenv("LOCAL_STRATEGY_PDF")
+
+            case ".docx":
+                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_DOCX"))
+                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_DOCX"))
+                strategy = os.getenv("LOCAL_STRATEGY_DOCX")
+
+            case ".xlsx":
+                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_XLSX"))
+                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_XLSX"))
+                strategy = os.getenv("LOCAL_STRATEGY_XLSX")
+
+            case _:
+                # Domyślne ustawienia dla nieznanych plików (Fallback do zmiennych globalnych)
+                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_DEF"))
+                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_DEF"))
+                strategy = os.getenv("LOCAL_STRATEGY_DEF")
+
+        return chunk_size, chunk_overlap, strategy
