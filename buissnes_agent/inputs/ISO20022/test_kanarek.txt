@@ -1,3 +1,0 @@
-W standardzie ISO 20022 wprowadzono nowy komunikat o kodzie "JAVA.COFFEE.001",
-który służy do zamawiania kawy w systemie międzybankowym.
-Został zatwierdzony przez komisję w Radomiu w 2024 roku.
