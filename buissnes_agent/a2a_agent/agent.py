@@ -16,6 +16,7 @@ from pydantic import BaseModel, create_model, Field
 from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
 from google.adk.tools.mcp_tool.mcp_tool import McpTool
 from langchain_core.tools import BaseTool
+import patch_pydantic  # TODO REMOVE THIS LATER
 from langfuse import get_client
 from langfuse.langchain import CallbackHandler
 import json
@@ -126,7 +127,7 @@ class AnalysisAgent:
             model=os.getenv('CHAT_MODEL'),
             openai_api_key=os.getenv('CHAT_API_KEY', 'EMPTY'),
             openai_api_base=os.getenv('CHAT_BASE_URL'),
-            temperature=0,
+            temperature=float(os.getenv('CHAT_TEMPERATURE', 0)),
             tiktoken_model_name=None,
             default_headers=json.loads(os.getenv('DEFAULT_HEADERS')),
         )
