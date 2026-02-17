@@ -165,7 +165,6 @@ class SearchKnowledgebase:
         Transformuje surowy tekst na listę chunków ze zunifikowanymi metadanymi.
         Obsługuje zarówno LegacyChunker jak i nowe podejście.
         """
-        processed_chunks = []
 
         chunk_module = os.getenv("CHUNKING_MODULE")
 
@@ -179,7 +178,7 @@ class SearchKnowledgebase:
 
             logger.info(f"LOGIC LAYER: Wybrano ContentChunker. Strategia: {strategy}")
             chunker_engine = LangChainChunker(strategy, chunk_size, chunk_overlap)
-            processed_chunks = chunker_engine.process_content(raw_text, file_metadata)
+
         else:
 
             # Pobranie dedykowanej konfiguracji (Size, Overlap, Strategy)
@@ -189,19 +188,7 @@ class SearchKnowledgebase:
             logger.info("LOGIC LAYER: Wybrano Legacy Chunker.")
             chunker_engine = LegacyChunker(strategy, chunk_size, chunk_overlap)
 
-            if ext in [".xml", ".xsd"]:
-                raw_list = chunker_engine.fixed(raw_text)
-            else:
-                raw_list = chunker_engine.auto(raw_text)
-
-            # Konwersja do formatu słownikowego
-            for txt in raw_list:
-                processed_chunks.append({
-                    "text": txt,
-                    "metadata": file_metadata
-                })
-
-        return processed_chunks
+        return chunker_engine.process_content(raw_text, file_metadata)
 
     def _embed_and_queue_batch(self, processed_chunks: list[dict], batch_items: list[dict]) -> None:
         """

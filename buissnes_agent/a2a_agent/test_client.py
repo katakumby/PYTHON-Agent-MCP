@@ -52,7 +52,7 @@ async def main() -> None:
             )
             final_agent_card_to_use = _public_card
             logger.info(
-                '\nUsing PUBLIC agent card for client initialization (default).'
+                '\nUsing PUBLIC agent card for testscripts initialization (default).'
             )
 
             if _public_card.supports_authenticated_extended_card:
@@ -81,7 +81,7 @@ async def main() -> None:
                         _extended_card  # Update to use the extended card
                     )
                     logger.info(
-                        '\nUsing AUTHENTICATED EXTENDED agent card for client '
+                        '\nUsing AUTHENTICATED EXTENDED agent card for testscripts '
                         'initialization.'
                     )
                 except Exception as e_extended:

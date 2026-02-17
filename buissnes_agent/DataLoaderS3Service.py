@@ -66,3 +66,12 @@ class DataLoaderS3Service:
         except Exception as e:
             logger.error(f"S3Service Error downloading {object_key}: {e}")
             raise e
+
+    def download_bytes(self, bucket_name: str, key: str) -> bytes:
+        """Pobiera obiekt z S3 jako surowe bajty (dla PDF/Obrazów)."""
+        try:
+            response = self.s3_client.get_object(Bucket=bucket_name, Key=key)
+            return response['Body'].read()
+        except Exception as e:
+            print(f"S3 Download Error (Bytes): {e}")
+            raise e

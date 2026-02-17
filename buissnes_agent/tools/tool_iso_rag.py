@@ -73,7 +73,7 @@ def run_iso_rag(query: str) -> str:
     3. Zwraca surowy tekst dokumentacji wraz z metadanymi.
     """
     collection_name = os.getenv("COLLECTION_NAME")
-    top_k = 5  # Ilość zwracanych fragmentów
+    top_k = 100  # Ilość zwracanych fragmentów
 
     # Upewnij się, że mamy połączenie z bazą
     _init_resources()

@@ -70,19 +70,7 @@ async def search_confluence_internal(query: str) -> str:
 if __name__ == "__main__":
     import argparse
 
-    # 1. Obsługa procesu ETL (Ingestia Danych)
-    # Próba załadowania pliku InitialConfig.py, który (w starej architekturze) uruchamiał indeksowanie plików.
-    # Jest to opcjonalne, aby serwer działał nawet jeśli ETL się nie powiedzie.
-    try:
-        import InitialConfig
-
-        print("[Server] Konfiguracja ETL załadowana pomyślnie.", file=sys.stderr)
-    except ImportError:
-        pass  # Ignorujemy brak configu
-    except Exception as e:
-        print(f"[Server] Ostrzeżenie: Błąd podczas ładowania ETL: {e}", file=sys.stderr)
-
-    # 2. Konfiguracja argumentów linii poleceń (CLI Args)
+    # 1. Konfiguracja argumentów linii poleceń (CLI Args)
     # Pozwala to na elastyczne uruchamianie serwera w różnych trybach architektury A2A.
     parser = argparse.ArgumentParser(description="Uruchamia serwer MCP dla Agenta ISO 20022")
 
@@ -98,7 +86,7 @@ if __name__ == "__main__":
 
     print(f"Starting ISO20022 RAG MCP Server in mode: {args.transport.upper()} {args.port} {args.host}...", file=sys.stderr)
 
-    # 3. Wybór trybu uruchomienia
+    # 2. Wybór trybu uruchomienia
     if args.transport == "sse":
         # Tryb SSE: Serwer HTTP (np. dla komunikacji między kontenerami Docker)
         # Uruchomienie: python MCPServer.py --transport sse
@@ -109,7 +97,7 @@ if __name__ == "__main__":
         mcp.run(transport="http", host=args.host, port=args.port)
     else:
         # Tryb STDIO: Komunikacja przez standardowe wejście/wyjście.
-        # Domyślny tryb dla klientów lokalnych (np. Claude Desktop App lub nasz client.py)
+        # Domyślny tryb dla klientów lokalnych (np. Claude Desktop App lub nasz testscripts.py)
         mcp.run(transport="stdio")
 
 
