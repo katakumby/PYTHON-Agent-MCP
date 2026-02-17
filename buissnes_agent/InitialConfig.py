@@ -25,7 +25,7 @@ def get_knowledge_base():
         return KNOWLEDGE_BASE
 
     # Lazy import - zapobiega błędom cyklicznego importu
-    from SearchKnowledgebase import SearchKnowledgebase
+    from KnowledgebasePipeline import SearchKnowledgebase
 
     # 1. Konfiguracja Chunkera
     data_source = os.getenv("DATA_SOURCE")  # domyślnie auto

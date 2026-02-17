@@ -63,6 +63,9 @@ class LangChainChunker:
             logger.warning(f"Unknown strategy {self.chunk_strategy}, utilizing recursive fallback.")
             return RecursiveStrategy(self.chunk_size, self.chunk_overlap)
 
+    # =========================================================================
+    # METODA: process_content (Wspólna metoda łącząca wejścia)
+    # =========================================================================
     def process_content(self, content: str, base_metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         ### Główny Pipeline Przetwarzania

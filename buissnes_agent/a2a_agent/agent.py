@@ -33,7 +33,7 @@ langfuse_handler = CallbackHandler()
 try:
 # Verify connection
     if langfuse.auth_check():
-        print("Langfuse client is authenticated and ready!")
+        print("Langfuse testscripts is authenticated and ready!")
         langfuse_enabled = True
     else:
         print("Authentication failed. Please check your credentials and host.")

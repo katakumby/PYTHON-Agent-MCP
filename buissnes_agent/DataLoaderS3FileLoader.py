@@ -1,57 +1,92 @@
 import logging
+import os
+import io
+import sys
 from typing import Dict, Any, Generator, Tuple
+
+# Biblioteki zewnętrzne
+import pypdf
+import docx
+import openpyxl
 
 from DataLoaderS3Service import DataLoaderS3Service
 
+logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
 
 
 class DataLoaderS3FileLoader:
-    """
-    Klasa odpowiedzialna za Warstwę Danych: Deleguje pobieranie plików do klasy `S3Service`
-    oraz przygotowuje wstępne metadane na podstawie ścieżki pliku.
-    """
-
     def __init__(self, bucket_name: str, prefix: str):
         self.bucket_name = bucket_name
         self.prefix = prefix
-
-        # Inicjalizacja serwisu S3 (delegacja połączenia)
         self.s3_service = DataLoaderS3Service()
         logger.info(f"S3FileLoader initialized. Bucket: {bucket_name}")
 
     def list_objects(self) -> Generator[str, None, None]:
-        """Wrapper na metodę z serwisu S3 - zwraca listę plików do przetworzenia."""
         return self.s3_service.list_objects(self.bucket_name, self.prefix)
 
     def load_file_with_metadata(self, s3_key: str) -> Tuple[str, Dict[str, Any]]:
-        """
-        Pobiera treść pliku i generuje metadane źródłowe.
-
-        Realizuje część oryginalnego procesu:
-        1. Pobranie: Ściąga treść pliku z S3 do pamięci RAM.
-        2. Metadata: Przygotowuje informacje o źródle (s3key, domena).
-        """
-
-        # 1. Pobranie treści
-        content = self.s3_service.download_text(self.bucket_name, s3_key)
-
-        # 2. Logika wyciągania metadanych
         metadata = {
-            "source_file": s3_key,
-            "s3key": s3_key
+            "source_file": os.path.basename(s3_key),
+            "s3key": s3_key,
+            "domain": "unknown"
         }
 
-        # 3. Dodanie Metadanych (Source file info)
-        # Usuwamy prefix, żeby dostać czystą ścieżkę względną dla domeny
+        # Wyciąganie domeny
         key_without_prefix = s3_key
         if self.prefix and s3_key.startswith(self.prefix):
             key_without_prefix = s3_key[len(self.prefix):].lstrip("/")
-
-        # Wyciąganie "domeny" biznesowej (pierwszy katalog w ścieżce)
         domain_name = key_without_prefix.split('/')[0] if '/' in key_without_prefix else None
-
         if domain_name:
             metadata["domain"] = domain_name
 
-        return content, metadata
+        ext = os.path.splitext(s3_key)[1].lower()
+        content = ""
+
+        try:
+            # --- BINARNE (PDF, DOCX, XLSX) ---
+            if ext in ['.pdf', '.docx', '.xlsx']:
+                try:
+                    file_bytes = self.s3_service.download_bytes(self.bucket_name, s3_key)
+
+                    with io.BytesIO(file_bytes) as f:
+
+                        # XLSX
+                        if ext == '.xlsx':
+                            wb = openpyxl.load_workbook(f, data_only=True)
+                            text_parts = []
+                            for sheet in wb.worksheets:
+                                text_parts.append(f"--- Sheet: {sheet.title} ---")
+                                for row in sheet.iter_rows(values_only=True):
+                                    row_text = " ".join([str(cell) for cell in row if cell is not None])
+                                    if row_text.strip():
+                                        text_parts.append(row_text)
+                            content = "\n".join(text_parts)
+
+                        # PDF
+                        elif ext == '.pdf':
+                            reader = pypdf.PdfReader(f)
+                            content = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+
+                        # DOCX
+                        elif ext == '.docx':
+                            doc = docx.Document(f)
+                            content = "\n".join([para.text for para in doc.paragraphs])
+
+                except Exception as bin_err:
+                    logger.error(f"Błąd parsowania pliku binarnego {s3_key}: {bin_err}")
+                    return "", {}
+
+            # --- TEKSTOWE ---
+            else:
+                try:
+                    content = self.s3_service.download_text(self.bucket_name, s3_key)
+                except Exception as txt_err:
+                    logger.error(f"Błąd pobierania tekstu {s3_key}: {txt_err}")
+                    return "", {}
+
+            return content, metadata
+
+        except Exception as e:
+            logger.error(f"Krytyczny błąd przy pliku {s3_key}: {e}")
+            return "", {}

@@ -24,7 +24,7 @@ Bez uv
 ```bash
 pip install mcp[cli] uvicorn sse-starlette
 pip install langchain langchain-core langchain-openai langchain-qdrant langchain-text-splitters langchain-experimental langchain-community
-pip install langgraph qdrant-client python-dotenv
+pip install langgraph qdrant-testscripts python-dotenv
 pip install httpx pypdf pandas openpyxl python-docx tiktoken scipy
 pip install wikipedia atlassian-python-api fastmcp
 ```
@@ -91,7 +91,7 @@ W tym trybie Klient automatycznie uruchamia Serwer jako podproces w tle. Komunik
     ```
 2.  Uruchom klienta:
     ```bash
-    python client.py
+    python testscripts.py
     ```
     *Klient sam zadba o uruchomienie i zamknięcie serwera.*
 
@@ -116,7 +116,7 @@ uv run buissnes_agent/MCPServer.py --transport sse --port 8000
     ```
 2.  Uruchom klienta:
     ```bash
-    python client_for_MCP_test.py
+    python test_script_client_for_MCP.py
     ```
     *Klient nawiąże połączenie HTTP z działającym serwerem.*
 
