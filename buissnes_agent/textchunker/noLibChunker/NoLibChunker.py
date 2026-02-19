@@ -2,6 +2,7 @@ import logging
 import sys
 import uuid
 from typing import List, Dict, Any
+import hashlib
 
 # Importy z pakietu
 from .base import BaseNoLibStrategy
@@ -134,7 +135,12 @@ class NoLibChunker:
 
             # Generujemy unikalne ID dla chunka (niezbędne dla baz wektorowych)
             if "_chunk_id" not in chunk_metadata:
-                chunk_metadata["_chunk_id"] = str(uuid.uuid4())
+                source_salt = chunk_metadata.get("source", "unknown_source")
+                # Łączymy źródło i treść, aby unikalnie zidentyfikować fragment
+                content_hash = f"{source_salt}_{chunk_text}"
+                # Generujemy MD5 (wystarczające do identyfikacji, szybkie i dostępne w stdlib)
+                doc_id = hashlib.md5(content_hash.encode("utf-8")).hexdigest()
+                chunk_metadata["_chunk_id"] = doc_id
 
             results.append({
                 "text": chunk_text,

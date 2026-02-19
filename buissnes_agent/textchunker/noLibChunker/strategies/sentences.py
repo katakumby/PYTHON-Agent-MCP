@@ -18,15 +18,25 @@ class SentencesStrategy(BaseNoLibStrategy):
     """
 
     def split_text(self, text: str) -> List[str]:
-        # Regex split lookbehind - dzieli po znaku interpunkcyjnym, ale go nie usuwa
+        # Regex split lookbehind - dzieli po znaku interpunkcyjnym
         sentences = re.split(r'(?<=[.!?])\s+', text)
 
         chunks, current = [], ""
         for sentence in sentences:
-            if len(current) + len(sentence) <= self.chunk_size:
-                current += " " + sentence
+            # Poprawka: Dodajemy +1 do długości, bo za chwilę dodamy spację
+            # Jeśli current jest pusty, to nie dodajemy spacji, więc długość jest ok
+            needed_space = 1 if current else 0
+
+            if len(current) + len(sentence) + needed_space <= self.chunk_size:
+                if current:
+                    current += " " + sentence
+                else:
+                    current = sentence
             else:
-                chunks.append(current.strip())
+                # Zapisujemy obecny chunk
+                if current:
+                    chunks.append(current.strip())
+                # Zaczynamy nowy od bieżącego zdania
                 current = sentence
 
         if current.strip():

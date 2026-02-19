@@ -2,6 +2,7 @@ import logging
 import sys
 import uuid
 from typing import List, Dict, Any
+import hashlib
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -100,8 +101,14 @@ class LangChainChunker:
         results = []
         for doc in final_documents:
             # Generowanie unikalnego ID dla chunka (niezbędne dla baz wektorowych do upsertu/usuwania)
+            # uuid.uuid4() -  jeśli uruchomisz pipeline dwa razy na tym samym pliku,
+            # dostaniesz nowe ID. Baza wektorowa będzie miała duplikaty.
+            # Rozwiązanie: Generuj hash (MD5/SHA256) na podstawie treści chunka + ścieżki pliku.
+
             if "_chunk_id" not in doc.metadata:
-                doc.metadata["_chunk_id"] = str(uuid.uuid4())
+                content_hash = f"{doc.page_content}{base_metadata.get('source', '')}"
+                doc_id = hashlib.md5(content_hash.encode()).hexdigest()
+                doc.metadata["_chunk_id"] = doc_id
 
             results.append({
                 "text": doc.page_content,
