@@ -25,6 +25,8 @@ from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPServerPa
 logger = logging.getLogger(__name__)
 memory = MemorySaver()
 
+AGENT_SETTINGS = os.getenv("AGENT_SETTINGS", "Analyst agent")
+SSL_VERIFY = bool(os.getenv('SSL_VERIFY', False))
 INTERNAL_MCP_URL = os.getenv("INTERNAL_MCP_URL", "http://localhost:8011/mcp")
 ATLASSIAN_MCP_URL = os.getenv("ATLASSIAN_MCP_URL", "http://localhost:9002/mcp/")
 
@@ -104,17 +106,14 @@ class McpToolWrapper(BaseTool):
 
     async def _arun(self, *args: Any, **kwargs: Any) -> Any:
         """Run tool asynchronously."""
-        # McpTool.run_async expects args as a dict
-        return await self.mcp_tool.run_async(args=kwargs, tool_context=None)
+        # Remove None values so we don't send explicit nulls for optional parameters
+        # which can cause validation errors on the MCP server side
+        clean_kwargs = {k: v for k, v in kwargs.items() if v is not None}
+        return await self.mcp_tool.run_async(args=clean_kwargs, tool_context=None)
 
 
 class AnalysisAgent:
     """Analysis Agent - a specialized assistant for currency conversions."""
-
-    SYSTEM_INSTRUCTION = (
-        'You are a specialized assistant for currency conversions. '
-        "Your sole purpose is to use the tools to answer questions . "
-    )
 
     FORMAT_INSTRUCTION = (
         'Set response status to input_required if the user needs to provide more information to complete the request.'
@@ -123,14 +122,7 @@ class AnalysisAgent:
     )
 
     def __init__(self):
-        self.model = ChatOpenAI(
-            model=os.getenv('CHAT_MODEL'),
-            openai_api_key=os.getenv('CHAT_API_KEY', 'EMPTY'),
-            openai_api_base=os.getenv('CHAT_BASE_URL'),
-            temperature=float(os.getenv('CHAT_TEMPERATURE', 0)),
-            tiktoken_model_name=None,
-            default_headers=json.loads(os.getenv('DEFAULT_HEADERS')),
-        )
+        self.model = None
         self.tools = []
         self.graph = None
 
@@ -161,12 +153,33 @@ class AnalysisAgent:
              logger.info(f"Loaded {len(atlassian_tools)} tools from Atlassian MCP")
         except Exception as e:
             logger.error(f"Failed to load tools from Atlassian MCP: {e}")
+        
+        agent_config = {}
+        if langfuse_enabled:
+            prompt = langfuse.get_prompt(AGENT_SETTINGS, label="latest")
+            agent_config = {
+                "prompt": prompt.prompt,
+                "config": {
+                    "temperature": prompt.config.get("temperature", 0)
+                }
+            }
+        else:
+            with open(os.path.join(os.path.dirname(__file__), 'default_config.json')) as f:
+                agent_config = json.load(f)
 
+        self.model = ChatOpenAI(
+            model=os.getenv('CHAT_MODEL'),
+            openai_api_key=os.getenv('CHAT_API_KEY', 'EMPTY'),
+            openai_api_base=os.getenv('CHAT_BASE_URL'),
+            temperature=float(agent_config['config']['temperature']),
+            tiktoken_model_name=None,
+            default_headers=json.loads(os.getenv('DEFAULT_HEADERS')),
+        )
         self.graph = create_react_agent(
             self.model,
             tools=self.tools,
             checkpointer=memory,
-            prompt=self.SYSTEM_INSTRUCTION,
+            prompt=agent_config['prompt'],
             response_format=(self.FORMAT_INSTRUCTION, ResponseFormat),
         )
 
@@ -208,33 +221,63 @@ class AnalysisAgent:
 
     def get_agent_response(self, config):
         current_state = self.graph.get_state(config)
-        structured_response = current_state.values.get('structured_response')
-        if structured_response and isinstance(
-            structured_response, ResponseFormat
-        ):
-            if structured_response.status == 'input_required':
-                return {
-                    'is_task_complete': False,
-                    'require_user_input': True,
-                    'content': structured_response.message,
-                }
-            if structured_response.status == 'error':
-                return {
-                    'is_task_complete': False,
-                    'require_user_input': True,
-                    'content': structured_response.message,
-                }
-            if structured_response.status == 'completed':
-                return {
-                    'is_task_complete': True,
-                    'require_user_input': False,
-                    'content': structured_response.message,
-                }
+        
+        last_ai_message = ""
+        messages = current_state.values.get('messages', [])
+        for msg in reversed(messages):
+            if getattr(msg, 'type', '') == 'human':
+                break
+            if isinstance(msg, AIMessage) and getattr(msg, 'content', None):
+                content = msg.content
+                if isinstance(content, str):
+                    last_ai_message = content.strip()
+                elif isinstance(content, list):
+                    texts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                    if not texts:
+                        texts = [b for b in content if isinstance(b, str)]
+                    last_ai_message = " ".join(filter(None, texts)).strip()
+                
+                if last_ai_message:
+                    break
 
+        structured_response = current_state.values.get('structured_response')
+        
+        final_content = ""
+        is_task_complete = False
+        require_user_input = True
+
+        if structured_response and isinstance(structured_response, ResponseFormat):
+            final_content = structured_response.message
+            
+            # Combine if last_ai_message has additional meaningful content
+            if last_ai_message and last_ai_message != structured_response.message:
+                if structured_response.message in last_ai_message:
+                    final_content = last_ai_message
+                elif last_ai_message in structured_response.message:
+                    final_content = structured_response.message
+                else:
+                    final_content = f"{last_ai_message}\n\n{structured_response.message}"
+            
+            if structured_response.status == 'input_required':
+                is_task_complete = False
+                require_user_input = True
+            elif structured_response.status == 'error':
+                is_task_complete = False
+                require_user_input = True
+            elif structured_response.status == 'completed':
+                is_task_complete = True
+                require_user_input = False
+                
+            return {
+                'is_task_complete': is_task_complete,
+                'require_user_input': require_user_input,
+                'content': final_content,
+            }
+            
         return {
             'is_task_complete': False,
             'require_user_input': True,
-            'content': (
+            'content': last_ai_message or (
                 'We are unable to process your request at the moment. '
                 'Please try again.'
             ),
