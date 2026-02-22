@@ -2,6 +2,7 @@ import os
 import sys
 import yaml
 import logging
+import argparse
 from typing import Any, Dict
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -18,6 +19,33 @@ class Config:
             cls._instance._load_config()
         return cls._instance
 
+    def _determine_profile(self) -> str:
+        """
+        Ustala profil w kolejności:
+        1. Argument linii poleceń (--prof / --profile)
+        2. Zmienna środowiskowa (APP_PROFILE)
+        3. Domyślny ('default')
+        """
+        # 1. Parsowanie argumentów (używamy parse_known_args, żeby nie gryzło się z resztą aplikacji)
+        parser = argparse.ArgumentParser(add_help=False)  # add_help=False, by nie przejmować flagi -h
+        parser.add_argument("--prof", "--profile", dest="profile", type=str, help="Nazwa profilu konfiguracyjnego")
+
+        # Pobieramy argumenty, ignorując nieznane (żeby główna aplikacja mogła mieć swoje flagi)
+        args, _ = parser.parse_known_args()
+
+        if args.profile:
+            logger.info(f"Wykryto profil z argumentów CLI: {args.profile}")
+            return args.profile
+
+        # 2. Sprawdzenie zmiennej środowiskowej
+        env_profile = os.getenv("APP_PROFILE")
+        if env_profile:
+            logger.info(f"Wykryto profil ze zmiennej środowiskowej: {env_profile}")
+            return env_profile
+
+        # 3. Domyślny
+        return "default"
+
     def _load_config(self):
         """Ładuje konfigurację: default.yaml + {profile}.yaml + ENV overrides."""
 
@@ -26,21 +54,21 @@ class Config:
         project_root = os.path.dirname(base_dir)  # root projektu
         config_dir = os.path.join(project_root, "config")
 
-        profile = os.getenv("APP_PROFILE", "default")
+        # 2. Ustalenie profilu
+        profile = self._determine_profile()
         logger.info(f"Ładowanie konfiguracji dla profilu: {profile}")
 
-        # 2. Ładowanie DEFAULT
+        # 3. Ładowanie DEFAULT
         default_path = os.path.join(config_dir, "default.yaml")
         self._data = self._load_yaml(default_path)
 
-        # 3. Ładowanie PROFILE specific (nadpisanie)
+        # 4. Ładowanie PROFILE specific (nadpisanie)
         if profile != "default":
             profile_path = os.path.join(config_dir, f"{profile}.yaml")
             profile_data = self._load_yaml(profile_path)
             self._merge_dicts(self._data, profile_data)
 
-        # 4. Nadpisanie ze zmiennych środowiskowych (opcjonalne, dla Docker/K8s)
-        # Przykład: APP_VECTOR_DB__COLLECTION_NAME nadpisuje vector_db.collection_name
+        # 5. Nadpisanie ze zmiennych środowiskowych (opcjonalne, dla Docker/K8s)
         self._apply_env_overrides()
 
         logger.info("Konfiguracja załadowana pomyślnie.")
