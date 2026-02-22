@@ -6,10 +6,6 @@ app:
   env: "default"
   # Opcja force_refresh znana z kodu Python
   force_refresh: false
-  custom:
-    # DEFAULT_HEADERS={"None": "None"}
-    default_headers:
-      None: "None"
 
 # ==============================================================================
 # 1 & 4. ŹRÓDŁA DANYCH (S3 / LOCAL)
