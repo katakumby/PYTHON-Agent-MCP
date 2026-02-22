@@ -1,19 +1,19 @@
+import io
 import logging
 import os
-import io
 import sys
 from typing import Dict, Any, Generator, Tuple
 
-# Biblioteki zewnętrzne
-import pypdf
 import docx
 import openpyxl
+# Biblioteki zewnętrzne
+import pypdf
 
 from DataLoaderS3Service import DataLoaderS3Service
+from buissnes_agent.MetadataModels import FileMetadata
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
-
 
 class DataLoaderS3FileLoader:
     def __init__(self, bucket_name: str, prefix: str):
@@ -26,32 +26,28 @@ class DataLoaderS3FileLoader:
         return self.s3_service.list_objects(self.bucket_name, self.prefix)
 
     def load_file_with_metadata(self, s3_key: str) -> Tuple[str, Dict[str, Any]]:
-        metadata = {
-            "source_file": os.path.basename(s3_key),
-            "s3key": s3_key,
-            "domain": "unknown"
-        }
 
-        # Wyciąganie domeny
+        # 1. Logika wyciągania domeny z hierarchii folderów
         key_without_prefix = s3_key
         if self.prefix and s3_key.startswith(self.prefix):
+            # Usuwamy prefix konfiguracyjny, żeby znaleźć "logiczną" domenę (podfolder)
             key_without_prefix = s3_key[len(self.prefix):].lstrip("/")
 
+        # Jeśli plik jest w podkatalogu, to nazwa tego katalogu to domena
         domain_name = key_without_prefix.split('/')[0] if '/' in key_without_prefix else "general"
+
         filename = os.path.basename(s3_key)
         ext = os.path.splitext(s3_key)[1].lower()
 
-        # --- NOWA STRUKTURA METADANYCH ---
-        metadata = {
-            "source": f"s3://{self.bucket_name}/{s3_key}", # MANDATORY URI
-            "title": filename,                             # OPTIONAL
-            "extension": ext,                              # OPTIONAL
-            "url": f"https://{self.bucket_name}.s3.amazonaws.com/{s3_key}", # OPTIONAL URL
-            "tags": ["cloud", "aws", "s3"],                # OPTIONAL
-            "domain": domain_name,                         # OPTIONAL
-            "page_number": None                            # Default
-        }
-
+        # 2. Tworzenie obiektu metadanych (Type Safe)
+        meta_obj = FileMetadata(
+            source=f"s3://{self.bucket_name}/{s3_key}",
+            title=filename,
+            extension=ext,
+            url=f"https://{self.bucket_name}.s3.amazonaws.com/{s3_key}",
+            domain=domain_name,
+            # tags domyślne, page_number None
+        )
         content = ""
 
         try:
@@ -96,7 +92,7 @@ class DataLoaderS3FileLoader:
                     logger.error(f"Błąd pobierania tekstu {s3_key}: {txt_err}")
                     return "", {}
 
-            return content, metadata
+            return content, meta_obj.to_dict()
 
         except Exception as e:
             logger.error(f"Krytyczny błąd przy pliku {s3_key}: {e}")

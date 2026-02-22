@@ -1,22 +1,20 @@
+import hashlib
 import logging
 import sys
-import uuid
 from typing import List, Dict, Any
-import hashlib
 
 # Importy z pakietu
 from .base import BaseNoLibStrategy
-
 from .strategies import (
     FixedStrategy,
     SentencesStrategy,
     MarkdownStrategy,
     SemanticStrategy
 )
+from ...MetadataModels import ChunkMetadata
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
 
 # =========================================================
 # KLASA: CHUNKER (LEGACY / BASE / NOLIB)
@@ -130,35 +128,47 @@ class NoLibChunker:
         # 3. Formatowanie do ujednoliconego standardu (List[Dict])
         results = []
         for idx, chunk_text in enumerate(safe_chunks):
-            # Kopiujemy metadane z Loadera (source, title, extension, domain...)
-            chunk_metadata = base_metadata.copy()
-
-            # --- MAPOWANIE NOWEGO SCHEMATU ---
-
-            # 1. PHRASE (Mandatory content)
-            chunk_metadata["phrase"] = chunk_text
-
-            # 2. PHRASE_METADATA_ID (Pointer/ID)
-            # Generujemy unikalne ID dla tego konkretnego fragmentu
-            # Używamy source + index, aby było deterministyczne
-            source_uri = chunk_metadata.get("source", "unknown")
-            unique_str = f"{source_uri}_{idx}_{chunk_text[:20]}"  # hashuj source + index + początek tekstu
+            # A. Przygotowanie ID
+            source_uri = base_metadata.get("source", "unknown")
+            unique_str = f"{source_uri}_{idx}_{chunk_text[:20]}"
             chunk_id = hashlib.md5(unique_str.encode("utf-8")).hexdigest()
 
-            chunk_metadata["phrase_metadata_id"] = chunk_id
+            # B. Separacja znanych pól od "extra"
+            # Wyciągamy znane pola ze słownika loadera, reszta idzie do extra_data
+            known_fields = {
+                "source": source_uri,
+                "title": base_metadata.get("title"),
+                "url": base_metadata.get("url"),
+                "extension": base_metadata.get("extension"),
+                "domain": base_metadata.get("domain"),
+                "tags": base_metadata.get("tags", []),
+                "page_number": base_metadata.get("page_number")
+            }
 
-            # 3. PAGE NUMBER (Opcjonalnie - symulacja)
-            # Jeśli loader nie podał, możemy zostawić None lub spróbować estymować
-            if chunk_metadata.get("page_number") is None:
-                # Opcjonalnie: chunk_metadata["page_number"] = 1
-                pass
+            # Wszystko co nie jest znane, trafia do extra
+            extras = {k: v for k, v in base_metadata.items() if k not in known_fields}
 
-            # Struktura wynikowa dla SearchKnowledgebase
-            # Uwaga: SearchKnowledgebase oczekuje klucza "text" do embeddingu,
-            # ale w bazie zapiszemy to jako "phrase".
+            # C. Instancjalizacja Dataclass
+            meta_obj = ChunkMetadata(
+                source=known_fields["source"],
+                phrase=chunk_text,  # Mandatory content
+                phrase_metadata_id=chunk_id,  # Mandatory ID
+
+                # Opcjonalne
+                title=known_fields["title"],
+                url=known_fields["url"],
+                extension=known_fields["extension"],
+                domain=known_fields["domain"],
+                tags=known_fields["tags"],
+                page_number=known_fields["page_number"],
+
+                extra_data=extras
+            )
+
+            # D. Budowanie wyniku
             results.append({
-                "text": chunk_text,  # To pole służy do generowania wektora (embeddingu)
-                "metadata": chunk_metadata  # To pole trafi do Payload w Qdrant
+                "text": chunk_text,  # Do embeddingu
+                "metadata": meta_obj.to_payload()  # Do bazy (płaski słownik)
             })
 
         return results

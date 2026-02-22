@@ -3,10 +3,12 @@ import os
 import sys
 from typing import Generator, Tuple, Dict, Any
 
-# Biblioteki zewnętrzne
-import pypdf  # pip install pypdf
 import docx  # pip install python-docx
 import openpyxl  # pip install openpyxl
+# Biblioteki zewnętrzne
+import pypdf  # pip install pypdf
+
+from buissnes_agent.MetadataModels import FileMetadata
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
@@ -14,7 +16,6 @@ logger = logging.getLogger(__name__)
 # Konfiguracja rozszerzeń
 extensions_str = os.getenv("ALLOWED_EXTENSIONS", ".md,.txt,.xml,.json,.pdf,.docx,.xlsx")
 ALLOWED_EXTENSIONS = [ext.strip().lower() for ext in extensions_str.split(",")]
-
 
 class DataLoaderLocalFileLoader:
     """
@@ -40,16 +41,16 @@ class DataLoaderLocalFileLoader:
         filename = os.path.basename(file_path)
         ext = os.path.splitext(file_path)[1].lower()
 
-        # --- NOWA STRUKTURA METADANYCH ---
-        metadata = {
-            "source": f"file://{file_path}",     # MANDATORY URI
-            "title": filename,                   # OPTIONAL title
-            "extension": ext,                    # OPTIONAL
-            "url": f"file://{file_path}",        # OPTIONAL URL
-            "tags": ["local", "filesystem"],     # OPTIONAL tags
-            "domain": "local",                   # OPTIONAL
-            "page_number": None                  # Default None (chunker can fill logic)
-        }
+        # 1. Tworzenie obiektu metadanych (Type Safe)
+        meta_obj = FileMetadata(
+            source=f"file://{file_path}",
+            title=filename,
+            extension=ext,
+            url=f"file://{file_path}",
+            domain="local",
+            tags=["local", "filesystem"],
+            page_number=None  # Cały plik, więc brak konkretnej strony
+        )
 
         content = ""
 
@@ -99,7 +100,7 @@ class DataLoaderLocalFileLoader:
                     logger.error(f"Błąd odczytu tekstu {filename}: {e}")
                     return "", {}
 
-            return content, metadata
+            return content, meta_obj.to_dict()
 
         except Exception as e:
             logger.error(f"Krytyczny błąd przy pliku {file_path}: {e}")

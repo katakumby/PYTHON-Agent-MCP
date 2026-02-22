@@ -1,21 +1,21 @@
+import hashlib
 import logging
 import sys
-import uuid
 from typing import List, Dict, Any
-import hashlib
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from buissnes_agent.textchunker.langchain.base import ChunkingStrategy
-# Importy interfejsu i strategii
-
 from .strategies import (
     MarkdownHeaderStrategy,
     RecursiveStrategy,
     UnstructuredStrategy,
     SemanticStrategy
 )
+from ...MetadataModels import ChunkMetadata
+
+# Importy interfejsu i strategii
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
@@ -85,10 +85,22 @@ class LangChainChunker:
         strategy = self._get_strategy()
         splits: List[Document] = strategy.split_text(content)
 
-        # Krok 2: Wzbogacenie o metadane źródłowe
-        # Metadane z Loadera (np. nazwa pliku) są propagowane do każdego fragmentu tego pliku
+        # Krok 2: Smart Metadata Merge (Inteligentne scalanie)
+        # Łączymy metadane z pliku z metadanymi z chunka (np. ze strategii PDF)
         for doc in splits:
-            doc.metadata.update(base_metadata)
+            # Normalizacja klucza strony (LangChain 'page' -> nasz 'page_number')
+            if "page" in doc.metadata:
+                doc.metadata["page_number"] = doc.metadata.pop("page")
+
+            # Scalanie z base_metadata bez nadpisywania ważnych pól
+            for key, value in base_metadata.items():
+                # Ochrona page_number przed nadpisaniem przez None
+                if key == "page_number" and doc.metadata.get("page_number") is not None:
+                    continue
+
+                # Dodajemy tylko jeśli brakuje lub jest puste
+                if key not in doc.metadata or (doc.metadata[key] is None and value is not None):
+                    doc.metadata[key] = value
 
         # Krok 3: Secondary Split (Hard Limit / Bezpiecznik)
         # Strategie logiczne (Header/Semantic) mogą zwrócić chunk 5000 znaków, jeśli rozdział był długi.
@@ -101,38 +113,50 @@ class LangChainChunker:
         results = []
         for idx, doc in enumerate(final_documents):
 
-            # A. Mapowanie PHRASE (Mandatory content)
-            # Treść chunka staje się polem 'phrase' w metadanych
-            doc.metadata["phrase"] = doc.page_content
+            # A. Pobieranie danych ze scalonych metadanych dokumentu
+            meta_dict = doc.metadata
+            source_uri = meta_dict.get("source", "unknown")
 
-            # B. Mapowanie PAGE_NUMBER
-            # Niektóre strategie LangChain (np. PDF loader) mogą dodać klucz 'page'.
-            # Mapujemy go na wymagany 'page_number'.
-            if "page" in doc.metadata:
-                doc.metadata["page_number"] = doc.metadata.pop("page")
-            elif "page_number" not in doc.metadata:
-                doc.metadata["page_number"] = None
-
-            # C. Generowanie PHRASE_METADATA_ID (Mandatory ID)
-            # Generujemy deterministyczny hash: Source URI + Index + Fragment treści
-            source_uri = doc.metadata.get("source", "unknown")
-            # Używamy pierwszych 50 znaków treści do solenia hasha
+            # B. Generowanie ID
             content_snippet = doc.page_content[:50]
-
             unique_str = f"{source_uri}_{idx}_{content_snippet}"
             chunk_id = hashlib.md5(unique_str.encode("utf-8")).hexdigest()
 
-            doc.metadata["phrase_metadata_id"] = chunk_id
+            # C. Separacja pól znanych od "extra"
+            # Definiujemy, które klucze mapujemy wprost na dataclass
+            known_keys = {"source", "title", "url", "extension", "domain", "tags", "page_number"}
 
-            # D. Oczyszczanie (opcjonalne)
-            # Usuwamy stare klucze jeśli istnieją, żeby nie śmiecić w bazie
-            if "_chunk_id" in doc.metadata:
-                del doc.metadata["_chunk_id"]
+            # Wyciągamy known fields
+            schema_data = {k: meta_dict.get(k) for k in known_keys}
+            # Ustawiamy domyślne source jeśli puste
+            if not schema_data["source"]:
+                schema_data["source"] = "unknown"
 
-            # E. Budowanie wyniku dla SearchKnowledgebase
+            # Wszystko inne trafia do extras (np. specyficzne metadane z PDF)
+            # Pomijamy klucze techniczne, które generujemy sami lub są śmieciami
+            exclude_keys = known_keys | {"phrase", "phrase_metadata_id", "_chunk_id", "loc"}
+            extras = {k: v for k, v in meta_dict.items() if k not in exclude_keys}
+
+            # D. Instancjalizacja Dataclass
+            meta_obj = ChunkMetadata(
+                source=schema_data["source"],
+                phrase=doc.page_content,  # Treść dokumentu
+                phrase_metadata_id=chunk_id,  # ID
+
+                title=schema_data["title"],
+                url=schema_data["url"],
+                extension=schema_data["extension"],
+                domain=schema_data["domain"],
+                tags=schema_data["tags"] or [],
+                page_number=schema_data["page_number"],
+
+                extra_data=extras
+            )
+
+            # E. Wynik
             results.append({
-                "text": doc.page_content,  # Służy do generowania wektora (embeddingu)
-                "metadata": doc.metadata  # Trafia do Payload w Qdrant (zawiera 'phrase')
+                "text": doc.page_content,  # Do embeddingu
+                "metadata": meta_obj.to_payload()  # Do bazy (płaskie)
             })
 
         return results
