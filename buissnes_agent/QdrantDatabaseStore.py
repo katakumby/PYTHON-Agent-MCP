@@ -6,7 +6,6 @@ from qdrant_client.models import VectorParams, PointStruct, Distance
 
 logger = logging.getLogger(__name__)
 
-
 class QdrantDatabaseStore:
     def __init__(self, url: str, api_key: str, collection_name: str, vector_size: int = 1536):
         self.collection_name = collection_name

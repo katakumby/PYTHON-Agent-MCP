@@ -7,6 +7,7 @@ from typing import Protocol, List
 import numpy as np
 from openai import OpenAI
 
+from buissnes_agent.config_loader import settings
 # Chunkings
 from buissnes_agent.textchunker.langchain.LangChainChunker import LangChainChunker
 from buissnes_agent.textchunker.noLibChunker.NoLibChunker import NoLibChunker as LegacyChunker
@@ -166,14 +167,14 @@ class SearchKnowledgebase:
         Obsługuje zarówno LegacyChunker jak i nowe podejście.
         """
 
-        chunk_module = os.getenv("CHUNKING_MODULE")
+        chunk_module = settings.get("chunking.module")
 
         ext = os.path.splitext(object_key)[1].lower()
 
         if chunk_module in ["langchain"]:
 
             # Pobranie dedykowanej konfiguracji (Size, Overlap, Strategy)
-            chunk_size, chunk_overlap, strategy = self._get_chunk_config_langchain(ext)
+            chunk_size, chunk_overlap, strategy = self._get_chunk_config(chunk_module, ext)
             print(f"Plik: {ext}, Chunk: {chunk_size}, Strategia: {strategy}")
 
             logger.info(f"LOGIC LAYER: Wybrano ContentChunker. Strategia: {strategy}")
@@ -182,7 +183,7 @@ class SearchKnowledgebase:
         else:
 
             # Pobranie dedykowanej konfiguracji (Size, Overlap, Strategy)
-            chunk_size, chunk_overlap, strategy = self._get_chunk_config_local(ext)
+            chunk_size, chunk_overlap, strategy = self._get_chunk_config(chunk_module, ext)
             print(f"Plik: {ext}, Chunk: {chunk_size}, Strategia: {strategy}")
 
             logger.info("LOGIC LAYER: Wybrano Legacy Chunker.")
@@ -215,112 +216,49 @@ class SearchKnowledgebase:
                 self.store.insert_batch(batch_items)
                 batch_items.clear()  # Czyścimy listę, co wpływa na zmienną w głównej funkcji
 
-    def _get_chunk_config_langchain(self, ext: str) -> tuple[int, int, str]:
+    def _get_chunk_config(self, module_name: str, ext: str) -> tuple[int, int, str]:
         """
-        Pomocnicza metoda dobierająca parametry chunkowania na podstawie rozszerzenia.
-        Zwraca (chunk_size, chunk_overlap, strategy).
-        """
+        Uniwersalna metoda pobierająca konfigurację chunkowania z obiektu settings.
+        Zastępuje hardkodowane match/case.
 
-        match ext:
-            case ".xml":
-                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_XML"))
-                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_XML"))
-                strategy = os.getenv("LANGCHAIN_STRATEGY_XML")
-
-            case ".xsd":
-                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_XSD"))
-                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_XSD"))
-                strategy = os.getenv("LANGCHAIN_STRATEGY_XSD")
-
-            case ".json":
-                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_JSON"))
-                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_JSON"))
-                strategy = os.getenv("LANGCHAIN_STRATEGY_JSON")
-
-            case ".txt":
-                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_TXT"))
-                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_TXT"))
-                strategy = os.getenv("LANGCHAIN_STRATEGY_TXT")
-
-            case ".md":
-                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_MD"))
-                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_MD"))
-                strategy = os.getenv("LANGCHAIN_STRATEGY_MD")
-
-            case ".pdf":
-                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_PDF"))
-                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_PDF"))
-                strategy = os.getenv("LANGCHAIN_STRATEGY_PDF")
-
-            case ".docx":
-                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_DOCX"))
-                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_DOCX"))
-                strategy = os.getenv("LANGCHAIN_STRATEGY_DOCX")
-
-            case ".xlsx":
-                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_XLSX"))
-                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_XLSX"))
-                strategy = os.getenv("LANGCHAIN_STRATEGY_XLSX")
-
-            case _:
-                # Domyślne ustawienia dla nieznanych plików (Fallback do zmiennych globalnych)
-                chunk_size = int(os.getenv("LANGCHAIN_CHUNK_SIZE_DEF"))
-                chunk_overlap = int(os.getenv("LANGCHAIN_CHUNK_OVERLAP_DEF"))
-                strategy = os.getenv("LANGCHAIN_STRATEGY_DEF")
-
-        return chunk_size, chunk_overlap, strategy
-
-    def _get_chunk_config_local(self, ext: str) -> tuple[int, int, str]:
-        """
-        Pomocnicza metoda dobierająca parametry chunkowania na podstawie rozszerzenia.
-        Zwraca (chunk_size, chunk_overlap, strategy).
+        Logika:
+        1. Szuka konfiguracji w: chunking.strategies.{module_name}.{ext_bez_kropki}
+        2. Jeśli brak, szuka w: chunking.strategies.{module_name}.def (fallback modułu)
+        3. Pobiera parametry, uzupełniając braki globalnymi wartościami domyślnymi.
         """
 
-        match ext:
-            case ".xml":
-                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_XML"))
-                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_XML"))
-                strategy = os.getenv("LOCAL_STRATEGY_XML")
+        # Usuwamy kropkę z rozszerzenia, bo w YAML klucze jej nie mają (np. "json", a nie ".json")
+        clean_ext = ext.lstrip(".").lower()
+        if not clean_ext:
+            clean_ext = "def"
 
-            case ".xsd":
-                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_XSD"))
-                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_XSD"))
-                strategy = os.getenv("LOCAL_STRATEGY_XSD")
+        # Ścieżka bazowa w konfiguracji dla danego modułu
+        base_path = f"chunking.strategies.{module_name}"
 
-            case ".json":
-                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_JSON"))
-                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_JSON"))
-                strategy = os.getenv("LOCAL_STRATEGY_JSON")
+        # Próba pobrania konfiguracji dla konkretnego rozszerzenia
+        # np. chunking.strategies.langchain.xml
+        ext_config = settings.get(f"{base_path}.{clean_ext}")
 
-            case ".txt":
-                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_TXT"))
-                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_TXT"))
-                strategy = os.getenv("LOCAL_STRATEGY_TXT")
+        # Jeśli nie znaleziono konfiguracji dla rozszerzenia, użyj domyślnej dla modułu (.def)
+        if not ext_config:
+            logger.debug(f"Brak strategii dla {clean_ext} w module {module_name}. Używam fallbacku 'def'.")
+            ext_config = settings.get(f"{base_path}.def")
 
-            case ".md":
-                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_MD"))
-                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_MD"))
-                strategy = os.getenv("LOCAL_STRATEGY_MD")
+        # Jeśli nadal nic nie ma (nawet .def w module nie istnieje), użyj pustego słownika,
+        # co spowoduje pobranie globalnych wartości domyślnych poniżej.
+        if not ext_config:
+            logger.warning(f"CRITICAL: Brak konfiguracji fallback 'def' dla modułu {module_name}!")
+            ext_config = {}
 
-            case ".pdf":
-                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_PDF"))
-                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_PDF"))
-                strategy = os.getenv("LOCAL_STRATEGY_PDF")
+        # Pobieranie wartości z fallbackiem do globalnych ustawień 'chunking.default_size' itp.
+        # YAML: chunking.default_size
+        global_default_size = settings.get("chunking.default_size")
+        global_default_overlap = settings.get("chunking.default_overlap")
 
-            case ".docx":
-                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_DOCX"))
-                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_DOCX"))
-                strategy = os.getenv("LOCAL_STRATEGY_DOCX")
+        chunk_size = ext_config.get("size", global_default_size)
+        chunk_overlap = ext_config.get("overlap", global_default_overlap)
 
-            case ".xlsx":
-                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_XLSX"))
-                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_XLSX"))
-                strategy = os.getenv("LOCAL_STRATEGY_XLSX")
+        # Strategia musi być zdefiniowana, jeśli nie - bezpieczny fallback
+        strategy = ext_config.get("strategy", "recursive" if module_name == "langchain" else "auto")
 
-            case _:
-                # Domyślne ustawienia dla nieznanych plików (Fallback do zmiennych globalnych)
-                chunk_size = int(os.getenv("LOCAL_CHUNK_SIZE_DEF"))
-                chunk_overlap = int(os.getenv("LOCAL_CHUNK_OVERLAP_DEF"))
-                strategy = os.getenv("LOCAL_STRATEGY_DEF")
-
-        return chunk_size, chunk_overlap, strategy
+        return int(chunk_size), int(chunk_overlap), str(strategy)

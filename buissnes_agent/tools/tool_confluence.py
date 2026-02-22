@@ -3,12 +3,15 @@ import sys
 from atlassian import Confluence
 from bs4 import BeautifulSoup
 
+from buissnes_agent.config_loader import settings
+
 
 def _get_confluence_client():
     """Pomocnicza funkcja do autoryzacji w Atlassian Cloud"""
-    url = os.getenv("CONFLUENCE_URL")
-    username = os.getenv("CONFLUENCE_USERNAME")
-    token = os.getenv("CONFLUENCE_API_TOKEN")
+    url = settings.get("integrations.confluence.url")
+    username = settings.get("integrations.confluence.username")
+    token = settings.get("integrations.confluence.api_token")
+
 
     if not all([url, username, token]):
         return None
@@ -47,6 +50,8 @@ def run_confluence_search(query: str) -> str:
             return "Nie znaleziono żadnych dokumentów wewnętrznych pasujących do zapytania."
 
         final_output = []
+        base_url = settings.get("integrations.confluence.url")
+        max_chars = int(settings.get("integrations.confluence.max_chars", 2000))
 
         # 2. Iteracja po wynikach i pobieranie treści
         for page in results["results"]:
@@ -54,7 +59,6 @@ def run_confluence_search(query: str) -> str:
             page_title = page["content"]["title"]
 
             # Konstrukcja linku do strony (dla użytkownika)
-            base_url = os.getenv('CONFLUENCE_URL')
             webui = page['content']['_links']['webui']
             # Czasem webui zawiera już /wiki, czasem nie - normalizacja:
             page_url = f"{base_url}/wiki{webui}" if not webui.startswith('/wiki') else f"{base_url}{webui}"
@@ -69,7 +73,6 @@ def run_confluence_search(query: str) -> str:
             text_content = soup.get_text(separator="\n").strip()
 
             # Ograniczenie długości per strona
-            max_chars = int(os.getenv("CONFLUENCE_MAX_CHARS", 2000))
             if len(text_content) > max_chars:
                 text_content = text_content[:max_chars] + "\n...(ucięto resztę strony)..."
 

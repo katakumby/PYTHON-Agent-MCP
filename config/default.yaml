@@ -1,0 +1,211 @@
+# ==============================================================================
+# KONFIGURACJA GŁÓWNA APLIKACJI
+# ==============================================================================
+app:
+  name: "Business Agent Core"
+  env: "default"
+  # Opcja force_refresh znana z kodu Python
+  force_refresh: false
+  custom:
+    # DEFAULT_HEADERS={"None": "None"}
+    default_headers:
+      None: "None"
+
+# ==============================================================================
+# 1 & 4. ŹRÓDŁA DANYCH (S3 / LOCAL)
+# ==============================================================================
+data_source:
+  # DATA_SOURCE=s3
+  type: "local"
+
+  # INPUT_DIRECTORY (ścieżka do odczytu lokalnego przez loadera)
+  local_input_path: "/home/blackmain/PycharmProjects/PYTHON-Agent-MCP/buissnes_agent/inputs"
+
+  # LOCAL_DATA_PATH (ścieżka do uploadu przez skrypt pomocniczy)
+  local_upload_path: "/home/blackmain/PycharmProjects/PYTHON-Agent-MCP/buissnes_agent/inputs"
+
+  s3:
+    # S3_ENDPOINT
+    endpoint: "http://localhost:9000"
+    # S3_AKID
+    access_key: "minioadmin"
+    # S3_SK
+    secret_key: "minioadmin"
+    # S3_REGION
+    region: "us-east-1"
+    # S3_BUCKET
+    bucket: "test-bucket"
+    # INPUT_S3_DIRECTORY (Puste = cały bucket)
+    prefix: ""
+
+# ==============================================================================
+# 2 & 3. CHUNKING I STRATEGIE
+# ==============================================================================
+chunking:
+  # CHUNKING_MODULE=legacy (Opcje: legacy, langchain)
+  module: "legacy"
+
+  # Parametry globalne (Fallback)
+  default_size: 600
+  default_overlap: 100
+
+  # ALLOWED_EXTENSIONS
+  allowed_extensions:
+    - ".md"
+    - ".txt"
+    - ".xml"
+    - ".xsd"
+    - ".pdf"
+    - ".docx"
+    - ".xlsx"
+    - ".json"
+
+  # Konfiguracja strategii
+  strategies:
+    # =========================================================
+    # Strategie dla modułu LANGCHAIN
+    # =========================================================
+    langchain:
+      md:
+        strategy: "unstructuredMarkdownLoaderSingle"
+        size: 1000
+        overlap: 100
+      txt:
+        strategy: "markdownHeaderTextSplitter"
+        size: 1000
+        overlap: 200
+      xml:
+        strategy: "markdownHeaderTextSplitter"
+        size: 600
+        overlap: 50
+      xsd:
+        strategy: "markdownHeaderTextSplitter"
+        size: 600
+        overlap: 50
+      json:
+        strategy: "markdownHeaderTextSplitter"
+        size: 500
+        overlap: 0
+      pdf:
+        strategy: "markdownHeaderTextSplitter"
+        size: 1500
+        overlap: 200
+      docx:
+        strategy: "markdownHeaderTextSplitter"
+        size: 1500
+        overlap: 200
+      xlsx:
+        strategy: "recursive"
+        size: 2000
+        overlap: 0
+      # Default fallback
+      def:
+        strategy: "markdownHeaderTextSplitter"
+        size: 2000
+        overlap: 0
+
+    # =========================================================
+    # Strategie dla modułu LEGACY (LOCAL)
+    # =========================================================
+    legacy:
+      md:
+        strategy: "auto"
+        size: 1000
+        overlap: 100
+      txt:
+        strategy: "auto"
+        size: 1000
+        overlap: 200
+      xml:
+        strategy: "auto"
+        size: 600
+        overlap: 50
+      xsd:
+        strategy: "auto"
+        size: 600
+        overlap: 50
+      json:
+        strategy: "auto"
+        size: 500
+        overlap: 0
+      pdf:
+        strategy: "auto"
+        size: 1500
+        overlap: 200
+      docx:
+        strategy: "auto"
+        size: 1500
+        overlap: 200
+      xlsx:
+        strategy: "auto"
+        size: 2000
+        overlap: 0
+      # Default fallback
+      def:
+        strategy: "auto"
+        size: 2000
+        overlap: 0
+
+# ==============================================================================
+# 5. BAZA WEKTOROWA (QDRANT)
+# ==============================================================================
+vector_db:
+  provider: "qdrant"
+  # QDRANT_API
+  url: "http://localhost:6333"
+  # QDRANT_API_KEY
+  api_key: ""
+  # COLLECTION_NAME
+  collection_name: "iso20022_remote_70b"
+  # EMBEDDING_DIM (Logic belongs here for DB config)
+  dimension: 768
+
+# ==============================================================================
+# 6 & 7. LLM (EMBEDDINGS & CHAT)
+# ==============================================================================
+llm:
+  embedding:
+    # EMBEDDING_PROVIDER
+    provider: "local"
+    # EMBEDDING_API_KEY
+    api_key: "lm-studio"
+    # EMBEDDING_BASE_URL
+    base_url: "http://192.168.50.110:1234/v1"
+    # EMBEDDING_MODEL
+    model: "nomic-embed-text-v1.5"
+
+  chat:
+    # CHAT_PROVIDER
+    provider: "local"
+    # CHAT_API_KEY
+    api_key: "lm-studio"
+    # CHAT_BASE_URL
+    base_url: "http://192.168.50.110:1234/v1"
+    # CHAT_MODEL
+    model: "Hermes-4-70B"
+
+# ==============================================================================
+# 8, 9, 10. INTEGRACJE (CONFLUENCE, MCP, A2A)
+# ==============================================================================
+integrations:
+  confluence:
+    url: "https://twoja-firma.atlassian.net"
+    username: "twoj-email@firma.com"
+    api_token: "twoj-token-api"
+    max_chars: 2000
+
+  mcp:
+    atlassian_url: "http://localhost:9002/mcp/"
+    internal_url: "http://localhost:8011/mcp"
+
+  a2a:
+    host: "host.docker.internal"
+
+# ==============================================================================
+# 10. OBSERVABILITY (LANGFUSE)
+# ==============================================================================
+observability:
+  langfuse:
+    public_key: "lf_pk_1234567890"
+    secret_key: "lf_sk_1234567890"
+    base_url: "http://localhost:3000"

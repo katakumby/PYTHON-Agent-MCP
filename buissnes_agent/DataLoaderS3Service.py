@@ -1,20 +1,19 @@
-import os
-import boto3
 import logging
 from typing import Generator
 
-logger = logging.getLogger(__name__)
+import boto3
 
-# Pobierz string z env i zamień na listę
-extensions_env = os.getenv("ALLOWED_EXTENSIONS")
+from buissnes_agent.config_loader import settings
+
+logger = logging.getLogger(__name__)
 
 class DataLoaderS3Service:
     def __init__(self):
         # Konfiguracja AWS / MinIO
-        self.aws_key = os.getenv('S3_AKID') or os.getenv('AWS_ACCESS_KEY_ID')
-        self.aws_secret = os.getenv('S3_SK') or os.getenv('AWS_SECRET_ACCESS_KEY')
-        self.aws_region = os.getenv('AWS_REGION') or os.getenv('S3_REGION') or "eu-north-1"
-        self.s3_endpoint = os.getenv('S3_ENDPOINT')
+        self.aws_key = settings.get("data_source.s3.access_key")
+        self.aws_secret = settings.get("data_source.s3.secret_key")
+        self.aws_region = settings.get("data_source.s3.region", "us-east-1")
+        self.s3_endpoint = settings.get("data_source.s3.endpoint")
 
         if not self.aws_key or not self.aws_secret:
             raise RuntimeError("Brak poświadczeń AWS w pliku .env (S3_AKID, S3_SK).")
@@ -40,13 +39,16 @@ class DataLoaderS3Service:
         paginator = self.s3_client.get_paginator('list_objects_v2')
         prefix_arg = prefix if prefix else ""
 
+        allowed_exts = settings.get("chunking.allowed_extensions", [])
+        ext_tuple = tuple(allowed_exts)
+
         try:
             for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix_arg):
                 if 'Contents' in page:
                     for obj in page['Contents']:
                         key = obj['Key']
                         # Filtrowanie obsługiwanych formatów tekstowych
-                        if key.endswith(tuple(extensions_env)):
+                        if key.endswith(ext_tuple):
                             yield key
         except Exception as e:
             logger.error(f"S3Service Error listing objects: {e}")

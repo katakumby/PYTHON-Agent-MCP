@@ -14,6 +14,8 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 
+from buissnes_agent.config_loader import settings
+
 # Pobieramy katalog, w którym fizycznie znajduje się skrypt
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -23,9 +25,9 @@ load_dotenv()
 SERVER_SCRIPT_PATH = os.path.join(BASE_DIR, "../buissnes_agent/MCPServer.py")
 
 # Pobieranie zmiennych LLM
-LLM_BASE_URL = os.getenv("CHAT_BASE_URL")
-LLM_API_KEY = os.getenv("CHAT_API_KEY")
-LLM_MODEL = os.getenv("CHAT_MODEL")
+LLM_BASE_URL = settings.get("llm.chat.base_url")
+LLM_API_KEY = settings.get("llm.chat.api_key")
+LLM_MODEL = settings.get("llm.chat.model")
 
 # ==============================================================================
 # SECURITY PROMPT

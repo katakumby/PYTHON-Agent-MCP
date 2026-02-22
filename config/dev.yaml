@@ -1,0 +1,14 @@
+chunking:
+  module: "langchain"
+
+data_source:
+  type: "s3"
+  s3:
+    bucket: "test-bucket"
+
+vector_db:
+  collection_name: "iso20022_dev"
+
+llm:
+  embedding:
+    base_url: "http://192.168.50.110:1234/v1"

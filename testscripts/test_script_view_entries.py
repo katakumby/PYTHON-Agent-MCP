@@ -2,18 +2,15 @@ import os
 import sys
 import logging
 import json  # <--- Dodano do pretty-printingu JSONa
-from dotenv import load_dotenv
+
 
 # Upewnij się, że ten import pasuje do struktury Twojego projektu
 from buissnes_agent.QdrantDatabaseStore import QdrantDatabaseStore
+from buissnes_agent.config_loader import settings
 
 # Konfiguracja logowania
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger("DB-Viewer")
-
-# Ładowanie zmiennych środowiskowych
-load_dotenv()
-
 
 def view_entries(limit: int = 5):
     """
@@ -22,9 +19,9 @@ def view_entries(limit: int = 5):
     """
 
     # 1. Pobieranie konfiguracji z .env
-    qdrant_url = os.getenv("QDRANT_API")
-    qdrant_key = os.getenv("QDRANT_API_KEY")
-    collection_name = os.getenv("COLLECTION_NAME", "knowledgebase")
+    qdrant_url = settings.get("vector_db.url")
+    qdrant_key = settings.get("vector_db.api_key")
+    collection_name = settings.get("vector_db.collection_name")
 
     if not qdrant_url:
         logger.error("Brak QDRANT_API w pliku .env")
@@ -69,7 +66,7 @@ def view_entries(limit: int = 5):
             payload = record.payload
 
             print(f"[{i}] Qdrant UUID: {record.id}")
-            print("    PEŁNE DANE (PAYLOAD):")
+            print("PEŁNE DANE (PAYLOAD):")
 
             # json.dumps sformatuje słownik payloadu w czytelną strukturę
             # ensure_ascii=False pozwala wyświetlać polskie znaki

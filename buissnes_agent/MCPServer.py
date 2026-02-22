@@ -1,21 +1,19 @@
-import sys
 import asyncio
 import logging
-from dotenv import load_dotenv
+import sys
+
 from fastmcp import FastMCP
 
+from tools.tool_confluence import run_confluence_search
 # IMPORTY LOGIKI NARZĘDZI
 from tools.tool_iso_rag import run_iso_rag
 from tools.tool_wikipedia import run_wikipedia_search
-from tools.tool_confluence import run_confluence_search
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 
 # Wyciszenie logów bibliotek HTTP (zbyt gadatliwe)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
-
-load_dotenv()
 
 # Inicjalizacja instancji FastMCP (nazwa serwera widoczna dla klienta)
 mcp = FastMCP("ISO20022 RAG Analyst Service")
