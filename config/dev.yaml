@@ -8,7 +8,3 @@ data_source:
 
 vector_db:
   collection_name: "iso20022_dev"
-
-llm:
-  embedding:
-    base_url: "http://192.168.50.110:1234/v1"

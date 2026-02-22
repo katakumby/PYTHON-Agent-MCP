@@ -1,7 +1,7 @@
+import os
+import boto3
 import logging
 from typing import Generator
-
-import boto3
 
 from buissnes_agent.config_loader import settings
 
@@ -10,10 +10,10 @@ logger = logging.getLogger(__name__)
 class DataLoaderS3Service:
     def __init__(self):
         # Konfiguracja AWS / MinIO
-        self.aws_key = settings.get("data_source.s3.access_key")
-        self.aws_secret = settings.get("data_source.s3.secret_key")
-        self.aws_region = settings.get("data_source.s3.region", "us-east-1")
-        self.s3_endpoint = settings.get("data_source.s3.endpoint")
+        self.aws_key = os.getenv('S3_AKID') or os.getenv('AWS_ACCESS_KEY_ID')
+        self.aws_secret = os.getenv('S3_SK') or os.getenv('AWS_SECRET_ACCESS_KEY')
+        self.aws_region = os.getenv('AWS_REGION') or os.getenv('S3_REGION') or "eu-north-1"
+        self.s3_endpoint = os.getenv('S3_ENDPOINT')
 
         if not self.aws_key or not self.aws_secret:
             raise RuntimeError("Brak poświadczeń AWS w pliku .env (S3_AKID, S3_SK).")

@@ -1,6 +1,9 @@
-import sys
 import logging
+import os
+import sys
+
 import qdrant_client
+from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 
 from buissnes_agent.config_loader import settings
@@ -15,6 +18,7 @@ logger = logging.getLogger(__name__)
 _qdrant_client = None
 _embeddings = None
 
+load_dotenv()
 
 def _init_resources():
     """
@@ -34,11 +38,11 @@ def _init_resources():
 
     try:
         # Pobranie konfiguracji z .env
-        emb_model = settings.get("llm.embedding.model")
-        emb_url = settings.get("llm.embedding.base_url")
-        emb_key = settings.get("llm.embedding.api_key")
-        qdrant_url = settings.get("vector_db.url")
-        qdrant_key = settings.get("vector_db.api_key")
+        emb_model = os.getenv('EMBEDDING_MODEL')
+        emb_url = os.getenv('EMBEDDING_BASE_URL')
+        emb_key = os.getenv('EMBEDDING_API_KEY')
+        qdrant_url = os.getenv('QDRANT_API')
+        qdrant_key = os.getenv('QDRANT_API_KEY')
 
         if not emb_model:
             raise ValueError("Brak zmiennej EMBEDDING_MODEL w pliku .env")
@@ -72,7 +76,7 @@ def run_iso_rag(query: str) -> str:
     2. Szuka w bazie Qdrant wektorów najbardziej podobnych (Search).
     3. Zwraca surowy tekst dokumentacji wraz z metadanymi.
     """
-    collection_name = settings.get("vector_db.collection_name", "knowledgebase")
+    collection_name = settings.get("vector_db.collection_name")
     top_k = 5  # Ilość zwracanych fragmentów
 
     # Upewnij się, że mamy połączenie z bazą

@@ -9,13 +9,10 @@ import openpyxl  # pip install openpyxl
 import pypdf  # pip install pypdf
 
 from buissnes_agent.MetadataModels import FileMetadata
+from buissnes_agent.config_loader import settings
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
-
-# Konfiguracja rozszerzeń
-extensions_str = os.getenv("ALLOWED_EXTENSIONS", ".md,.txt,.xml,.json,.pdf,.docx,.xlsx")
-ALLOWED_EXTENSIONS = [ext.strip().lower() for ext in extensions_str.split(",")]
 
 class DataLoaderLocalFileLoader:
     """
@@ -27,6 +24,10 @@ class DataLoaderLocalFileLoader:
         self.directory = os.path.abspath(directory)
 
     def list_objects(self) -> Generator[str, None, None]:
+
+        allowed_exts = settings.get("chunking.allowed_extensions", [])
+        ext_tuple = tuple(allowed_exts)
+
         if not os.path.exists(self.directory):
             logger.error(f"Katalog nie istnieje: {self.directory}")
             return
@@ -34,7 +35,7 @@ class DataLoaderLocalFileLoader:
         for root, _, files in os.walk(self.directory):
             for file in files:
                 ext = os.path.splitext(file)[1].lower()
-                if ext in ALLOWED_EXTENSIONS:
+                if ext in ext_tuple:
                     yield os.path.join(root, file)
 
     def load_file_with_metadata(self, file_path: str) -> Tuple[str, Dict[str, Any]]:

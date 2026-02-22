@@ -24,20 +24,6 @@ data_source:
   # LOCAL_DATA_PATH (ścieżka do uploadu przez skrypt pomocniczy)
   local_upload_path: "/home/blackmain/PycharmProjects/PYTHON-Agent-MCP/buissnes_agent/inputs"
 
-  s3:
-    # S3_ENDPOINT
-    endpoint: "http://localhost:9000"
-    # S3_AKID
-    access_key: "minioadmin"
-    # S3_SK
-    secret_key: "minioadmin"
-    # S3_REGION
-    region: "us-east-1"
-    # S3_BUCKET
-    bucket: "test-bucket"
-    # INPUT_S3_DIRECTORY (Puste = cały bucket)
-    prefix: ""
-
 # ==============================================================================
 # 2 & 3. CHUNKING I STRATEGIE
 # ==============================================================================
@@ -150,62 +136,7 @@ chunking:
 # 5. BAZA WEKTOROWA (QDRANT)
 # ==============================================================================
 vector_db:
-  provider: "qdrant"
-  # QDRANT_API
-  url: "http://localhost:6333"
-  # QDRANT_API_KEY
-  api_key: ""
   # COLLECTION_NAME
   collection_name: "iso20022_remote_70b"
   # EMBEDDING_DIM (Logic belongs here for DB config)
   dimension: 768
-
-# ==============================================================================
-# 6 & 7. LLM (EMBEDDINGS & CHAT)
-# ==============================================================================
-llm:
-  embedding:
-    # EMBEDDING_PROVIDER
-    provider: "local"
-    # EMBEDDING_API_KEY
-    api_key: "lm-studio"
-    # EMBEDDING_BASE_URL
-    base_url: "http://192.168.50.110:1234/v1"
-    # EMBEDDING_MODEL
-    model: "nomic-embed-text-v1.5"
-
-  chat:
-    # CHAT_PROVIDER
-    provider: "local"
-    # CHAT_API_KEY
-    api_key: "lm-studio"
-    # CHAT_BASE_URL
-    base_url: "http://192.168.50.110:1234/v1"
-    # CHAT_MODEL
-    model: "Hermes-4-70B"
-
-# ==============================================================================
-# 8, 9, 10. INTEGRACJE (CONFLUENCE, MCP, A2A)
-# ==============================================================================
-integrations:
-  confluence:
-    url: "https://twoja-firma.atlassian.net"
-    username: "twoj-email@firma.com"
-    api_token: "twoj-token-api"
-    max_chars: 2000
-
-  mcp:
-    atlassian_url: "http://localhost:9002/mcp/"
-    internal_url: "http://localhost:8011/mcp"
-
-  a2a:
-    host: "host.docker.internal"
-
-# ==============================================================================
-# 10. OBSERVABILITY (LANGFUSE)
-# ==============================================================================
-observability:
-  langfuse:
-    public_key: "lf_pk_1234567890"
-    secret_key: "lf_sk_1234567890"
-    base_url: "http://localhost:3000"

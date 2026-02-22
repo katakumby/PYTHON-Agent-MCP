@@ -3,16 +3,21 @@ import sys
 import boto3
 import logging
 
+from dotenv import load_dotenv
+
 from buissnes_agent.config_loader import settings
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
 
+load_dotenv()
+
+
 def get_s3_client():
-    aws_key = settings.get("data_source.s3.access_key")
-    aws_secret = settings.get("data_source.s3.secret_key")
-    s3_endpoint = settings.get("data_source.s3.endpoint")
-    aws_region = settings.get("data_source.s3.region", "us-east-1")
+    aws_key = os.getenv('S3_AKID') or os.getenv('AWS_ACCESS_KEY_ID')
+    aws_secret = os.getenv('S3_SK') or os.getenv('AWS_SECRET_ACCESS_KEY')
+    s3_endpoint = os.getenv('S3_ENDPOINT')
+    aws_region = os.getenv('AWS_REGION') or "us-east-1"
 
     if not aws_key or not aws_secret:
         logger.error("Brak poświadczeń AWS/MinIO w .env")
@@ -68,7 +73,7 @@ def upload_recursive(s3_client, bucket_name):
 
 
 if __name__ == "__main__":
-    bucket = settings.get("data_source.s3.bucket")
+    bucket = os.getenv("S3_BUCKET")
     if not bucket:
         print("Brak S3_BUCKET w .env")
         sys.exit(1)
