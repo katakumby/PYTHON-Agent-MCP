@@ -73,10 +73,13 @@ def run_iso_rag(query: str) -> str:
     3. Zwraca surowy tekst dokumentacji wraz z metadanymi.
     """
     collection_name = os.getenv("COLLECTION_NAME")
-    top_k = 100  # Ilość zwracanych fragmentów
+    top_k = 5  # Ilość zwracanych fragmentów
 
     # Upewnij się, że mamy połączenie z bazą
-    _init_resources()
+    try:
+        _init_resources()
+    except Exception as e:
+        return f"Błąd techniczny: Nie udało się połączyć z bazą wiedzy ({str(e)})."
 
     if not _qdrant_client or not _embeddings:
         return "Błąd techniczny: Narzędzie RAG nie jest poprawnie skonfigurowane."
@@ -84,29 +87,53 @@ def run_iso_rag(query: str) -> str:
     print(f"[RAG] Szukam: '{query}' w kolekcji '{collection_name}'", file=sys.stderr)
 
     try:
-        # LangChain wrapper na Qdranta - ułatwia wyszukiwanie
-        vector_store = QdrantVectorStore(
-            client=_qdrant_client,
+        # KROK 1: Generowanie wektora zapytania
+        query_vector = _embeddings.embed_query(query)
+
+        # KROK 2: Wyszukiwanie w Qdrant (Metoda query_points)
+        # ZMIANA: Używamy query_points zamiast search
+        search_response = _qdrant_client.query_points(
             collection_name=collection_name,
-            embedding=_embeddings
+            query=query_vector,  # ZMIANA: parametr nazywa się 'query', a nie 'query_vector'
+            limit=top_k,
+            with_payload=True
         )
 
-        # Tworzymy obiekt Retrievera i wykonujemy zapytanie
-        retriever = vector_store.as_retriever(search_kwargs={"k": top_k})
-        docs = retriever.invoke(query)
+        # ZMIANA: query_points zwraca obiekt QueryResponse, a punkty są w atrybucie .points
+        points = search_response.points
 
-        if not docs:
+        if not points:
             return "Nie znaleziono relewantnych dokumentów w bazie wiedzy ISO 20022."
 
-        # Formatowanie wyniku dla LLM-a
-        # Ważne: Dodajemy informacje o źródle (Source File), aby LLM mógł zacytować plik.
-        formatted_results = []
-        for i, doc in enumerate(docs, 1):
-            source = doc.metadata.get("source_file", "nieznany plik")
-            content = doc.page_content.strip()
-            formatted_results.append(f"--- FRAGMENT {i} (Źródło: {source}) ---\n{content}")
+        # KROK 3: Formatowanie wyniku dla LLM
+        formatted_output = []
+        for i, point in enumerate(points, 1):
+            payload = point.payload or {}
 
-        return "\n\n".join(formatted_results)
+            # Pobieranie pól zgodnie z nowym schematem
+            # Priorytet: 'phrase' -> 'text' -> Placeholder
+            content = payload.get("phrase") or payload.get("text") or "[BRAK TREŚCI]"
+
+            # Metadane źródłowe
+            source_uri = payload.get("source", "nieznane źródło")
+            title = payload.get("title")
+            page = payload.get("page_number")
+
+            # Budowanie nagłówka
+            source_info = f"Źródło: {source_uri}"
+            if title and title not in source_uri:
+                source_info += f" ({title})"
+            if page:
+                source_info += f", Strona: {page}"
+
+            entry = (
+                f"--- DOKUMENT {i} (Relewancja: {point.score:.4f}) ---\n"
+                f"{source_info}\n"
+                f"Treść:\n{content.strip()}"
+            )
+            formatted_output.append(entry)
+
+        return "\n\n".join(formatted_output)
 
     except Exception as e:
         err_msg = f"Błąd podczas przeszukiwania bazy wiedzy: {str(e)}"

@@ -36,11 +36,22 @@ class DataLoaderS3FileLoader:
         key_without_prefix = s3_key
         if self.prefix and s3_key.startswith(self.prefix):
             key_without_prefix = s3_key[len(self.prefix):].lstrip("/")
-        domain_name = key_without_prefix.split('/')[0] if '/' in key_without_prefix else None
-        if domain_name:
-            metadata["domain"] = domain_name
 
+        domain_name = key_without_prefix.split('/')[0] if '/' in key_without_prefix else "general"
+        filename = os.path.basename(s3_key)
         ext = os.path.splitext(s3_key)[1].lower()
+
+        # --- NOWA STRUKTURA METADANYCH ---
+        metadata = {
+            "source": f"s3://{self.bucket_name}/{s3_key}", # MANDATORY URI
+            "title": filename,                             # OPTIONAL
+            "extension": ext,                              # OPTIONAL
+            "url": f"https://{self.bucket_name}.s3.amazonaws.com/{s3_key}", # OPTIONAL URL
+            "tags": ["cloud", "aws", "s3"],                # OPTIONAL
+            "domain": domain_name,                         # OPTIONAL
+            "page_number": None                            # Default
+        }
+
         content = ""
 
         try:

@@ -99,20 +99,40 @@ class LangChainChunker:
 
         # Krok 4: Formatowanie wyniku
         results = []
-        for doc in final_documents:
-            # Generowanie unikalnego ID dla chunka (niezbędne dla baz wektorowych do upsertu/usuwania)
-            # uuid.uuid4() -  jeśli uruchomisz pipeline dwa razy na tym samym pliku,
-            # dostaniesz nowe ID. Baza wektorowa będzie miała duplikaty.
-            # Rozwiązanie: Generuj hash (MD5/SHA256) na podstawie treści chunka + ścieżki pliku.
+        for idx, doc in enumerate(final_documents):
 
-            if "_chunk_id" not in doc.metadata:
-                content_hash = f"{doc.page_content}{base_metadata.get('source', '')}"
-                doc_id = hashlib.md5(content_hash.encode()).hexdigest()
-                doc.metadata["_chunk_id"] = doc_id
+            # A. Mapowanie PHRASE (Mandatory content)
+            # Treść chunka staje się polem 'phrase' w metadanych
+            doc.metadata["phrase"] = doc.page_content
 
+            # B. Mapowanie PAGE_NUMBER
+            # Niektóre strategie LangChain (np. PDF loader) mogą dodać klucz 'page'.
+            # Mapujemy go na wymagany 'page_number'.
+            if "page" in doc.metadata:
+                doc.metadata["page_number"] = doc.metadata.pop("page")
+            elif "page_number" not in doc.metadata:
+                doc.metadata["page_number"] = None
+
+            # C. Generowanie PHRASE_METADATA_ID (Mandatory ID)
+            # Generujemy deterministyczny hash: Source URI + Index + Fragment treści
+            source_uri = doc.metadata.get("source", "unknown")
+            # Używamy pierwszych 50 znaków treści do solenia hasha
+            content_snippet = doc.page_content[:50]
+
+            unique_str = f"{source_uri}_{idx}_{content_snippet}"
+            chunk_id = hashlib.md5(unique_str.encode("utf-8")).hexdigest()
+
+            doc.metadata["phrase_metadata_id"] = chunk_id
+
+            # D. Oczyszczanie (opcjonalne)
+            # Usuwamy stare klucze jeśli istnieją, żeby nie śmiecić w bazie
+            if "_chunk_id" in doc.metadata:
+                del doc.metadata["_chunk_id"]
+
+            # E. Budowanie wyniku dla SearchKnowledgebase
             results.append({
-                "text": doc.page_content,
-                "metadata": doc.metadata
+                "text": doc.page_content,  # Służy do generowania wektora (embeddingu)
+                "metadata": doc.metadata  # Trafia do Payload w Qdrant (zawiera 'phrase')
             })
 
         return results

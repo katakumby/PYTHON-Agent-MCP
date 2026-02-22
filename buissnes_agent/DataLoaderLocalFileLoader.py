@@ -40,10 +40,15 @@ class DataLoaderLocalFileLoader:
         filename = os.path.basename(file_path)
         ext = os.path.splitext(file_path)[1].lower()
 
+        # --- NOWA STRUKTURA METADANYCH ---
         metadata = {
-            "source_file": filename,
-            "filepath": file_path,
-            "extension": ext
+            "source": f"file://{file_path}",     # MANDATORY URI
+            "title": filename,                   # OPTIONAL title
+            "extension": ext,                    # OPTIONAL
+            "url": f"file://{file_path}",        # OPTIONAL URL
+            "tags": ["local", "filesystem"],     # OPTIONAL tags
+            "domain": "local",                   # OPTIONAL
+            "page_number": None                  # Default None (chunker can fill logic)
         }
 
         content = ""

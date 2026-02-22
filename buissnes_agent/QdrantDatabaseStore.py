@@ -2,8 +2,7 @@ import logging
 import uuid
 from typing import List, Dict, Any
 from qdrant_client import QdrantClient
-from qdrant_client.models import VectorParams, PointStruct, Distance, Filter, FieldCondition, MatchValue
-import hashlib
+from qdrant_client.models import VectorParams, PointStruct, Distance
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +15,7 @@ class QdrantDatabaseStore:
         self._ensure_collection()
 
     def _ensure_collection(self):
-        """ Tworzy kolekcję tylko jeśli nie istnieje."""
+        """Tworzy kolekcję tylko jeśli nie istnieje."""
         try:
             if not self.client.collection_exists(self.collection_name):
                 logger.info(f"Tworzenie kolekcji: {self.collection_name} (dim: {self.vector_size})")
@@ -31,50 +30,86 @@ class QdrantDatabaseStore:
             raise
 
     def count(self) -> int:
+        """Zwraca liczbę wektorów w kolekcji."""
         try:
             return self.client.count(collection_name=self.collection_name).count
         except Exception:
             return 0
 
     def insert_batch(self, items: List[Dict[str, Any]]):
-        if not items: return
+        """
+        Wstawia paczkę dokumentów do Qdrant.
+        Obsługuje konwersję ID (Hash -> UUID) oraz mapowanie Phrase.
+        """
+        if not items:
+            return
+
         points = []
 
-        """
-        Generuj ID na podstawie treści chunka (hash). Dzięki temu, jeśli chunk się nie zmienił, 
-        nadpisze się w bazie zamiast tworzyć duplikat.
-        """
         for item in items:
-            # Generowanie deterministycznego ID na podstawie treści i nazwy pliku
-            unique_string = f"{item['metadata']['source_file']}_{item['text']}"
-            # Tworzymy hash MD5 jako seed dla UUID
-            point_id = str(uuid.UUID(hex=hashlib.md5(unique_string.encode('utf-8')).hexdigest()))
+            metadata = item["metadata"]
+            raw_id = metadata.get("phrase_metadata_id")
 
-            payload = item["metadata"].copy()
-            payload["text"] = item["text"]
-            points.append(PointStruct(id=point_id, vector=item["vector"], payload=payload))
+            # 1. Walidacja i formatowanie ID (Qdrant wymaga UUID z myślnikami lub int)
+            point_id = str(uuid.uuid4())  # Fallback
+            if raw_id:
+                try:
+                    # Jeśli ID to 32-znakowy hash MD5, zamieniamy go na format UUID (8-4-4-4-12)
+                    point_id = str(uuid.UUID(hex=raw_id))
+                except ValueError:
+                    # Jeśli to nie hex, zostawiamy jak jest (o ile to string) lub generujemy nowy
+                    logger.warning(f"Nieprawidłowy format ID '{raw_id}', generuję nowy UUID.")
+                    pass
 
-        # for item in items:
-        #     point_id = str(uuid.uuid4())
-        #     payload = item["metadata"].copy()
-        #     payload["text"] = item["text"]
-        #     points.append(PointStruct(id=point_id, vector=item["vector"], payload=payload))
+            # 2. Przygotowanie Payloadu (Płaska struktura)
+            payload = metadata.copy()
+
+            # Gwarancja istnienia klucza 'phrase' (treść)
+            if "phrase" not in payload:
+                payload["phrase"] = item.get("text", "")
+
+            # 3. Tworzenie punktu
+            points.append(PointStruct(
+                id=point_id,
+                vector=item["vector"],
+                payload=payload
+            ))
 
         try:
             self.client.upsert(collection_name=self.collection_name, points=points)
-            logger.info(f"Zapisano {len(points)} wektorów.")
+            logger.info(f"Zapisano {len(points)} wektorów. Przykładowy ID: {points[0].id}")
         except Exception as e:
-            logger.error(f"Błąd zapisu: {e}")
+            logger.error(f"Błąd zapisu do Qdrant: {e}")
 
-    def search(self, query_vector: List[float], limit: int = 3) -> List[Dict]:
+    def search(self, query_vector: List[float], limit: int = 5) -> List[Dict]:
+        """
+        Wyszukuje podobne wektory i zwraca zmapowane wyniki.
+        Zaktualizowano do obsługi nowego schematu ('phrase' i 'metadata').
+        """
         try:
-            results = self.client.query_points(
+            results = self.client.search(
                 collection_name=self.collection_name,
-                query=query_vector,
+                query_vector=query_vector,
                 limit=limit,
                 with_payload=True,
             )
-            return [{"text": p.payload.get("text", ""), "score": p.score} for p in results.points]
+
+            output = []
+            for p in results:
+                payload = p.payload or {}
+
+                # Pobieramy treść (phrase ma priorytet nad text)
+                content = payload.get("phrase") or payload.get("text") or ""
+
+                # Zwracamy spójną strukturę
+                output.append({
+                    "text": content,  # Dla kompatybilności wstecznej
+                    "metadata": payload,  # Pełne metadane (source, title, etc.)
+                    "score": p.score
+                })
+
+            return output
+
         except Exception as e:
             logger.error(f"Błąd wyszukiwania: {e}")
             return []

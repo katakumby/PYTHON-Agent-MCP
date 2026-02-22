@@ -129,22 +129,36 @@ class NoLibChunker:
 
         # 3. Formatowanie do ujednoliconego standardu (List[Dict])
         results = []
-        for chunk_text in safe_chunks:
-            # Kopiujemy metadane bazowe, żeby nie nadpisywać ich w pętli
+        for idx, chunk_text in enumerate(safe_chunks):
+            # Kopiujemy metadane z Loadera (source, title, extension, domain...)
             chunk_metadata = base_metadata.copy()
 
-            # Generujemy unikalne ID dla chunka (niezbędne dla baz wektorowych)
-            if "_chunk_id" not in chunk_metadata:
-                source_salt = chunk_metadata.get("source", "unknown_source")
-                # Łączymy źródło i treść, aby unikalnie zidentyfikować fragment
-                content_hash = f"{source_salt}_{chunk_text}"
-                # Generujemy MD5 (wystarczające do identyfikacji, szybkie i dostępne w stdlib)
-                doc_id = hashlib.md5(content_hash.encode("utf-8")).hexdigest()
-                chunk_metadata["_chunk_id"] = doc_id
+            # --- MAPOWANIE NOWEGO SCHEMATU ---
 
+            # 1. PHRASE (Mandatory content)
+            chunk_metadata["phrase"] = chunk_text
+
+            # 2. PHRASE_METADATA_ID (Pointer/ID)
+            # Generujemy unikalne ID dla tego konkretnego fragmentu
+            # Używamy source + index, aby było deterministyczne
+            source_uri = chunk_metadata.get("source", "unknown")
+            unique_str = f"{source_uri}_{idx}_{chunk_text[:20]}"  # hashuj source + index + początek tekstu
+            chunk_id = hashlib.md5(unique_str.encode("utf-8")).hexdigest()
+
+            chunk_metadata["phrase_metadata_id"] = chunk_id
+
+            # 3. PAGE NUMBER (Opcjonalnie - symulacja)
+            # Jeśli loader nie podał, możemy zostawić None lub spróbować estymować
+            if chunk_metadata.get("page_number") is None:
+                # Opcjonalnie: chunk_metadata["page_number"] = 1
+                pass
+
+            # Struktura wynikowa dla SearchKnowledgebase
+            # Uwaga: SearchKnowledgebase oczekuje klucza "text" do embeddingu,
+            # ale w bazie zapiszemy to jako "phrase".
             results.append({
-                "text": chunk_text,
-                "metadata": chunk_metadata
+                "text": chunk_text,  # To pole służy do generowania wektora (embeddingu)
+                "metadata": chunk_metadata  # To pole trafi do Payload w Qdrant
             })
 
         return results
