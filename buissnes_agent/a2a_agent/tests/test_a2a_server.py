@@ -1,4 +1,5 @@
 import unittest
+import json
 
 from contextlib import asynccontextmanager
 from typing import Any
@@ -23,6 +24,7 @@ from buissnes_agent.a2a_agent.__main__ import (
     _build_app,
     _build_grpc_server,
     _build_request_handler,
+    _shutdown_grpc_servers,
 )
 from buissnes_agent.a2a_agent.agent import AnalysisAgent
 
@@ -85,7 +87,7 @@ class A2AAgentServerTests(unittest.IsolatedAsyncioTestCase):
                 await channel.channel_ready()
                 stub = a2a_pb2_grpc.A2AServiceStub(channel)
                 yield stub
-            await grpc_server.stop(0)
+            await _shutdown_grpc_servers(grpc_server)
 
     def _send_message_payload(self, text: str) -> dict[str, Any]:
         request = SendMessageRequest(
@@ -145,7 +147,7 @@ class A2AAgentServerTests(unittest.IsolatedAsyncioTestCase):
             payload['supportedInterfaces'],
         )
 
-    async def test_swagger_docs_expose_rest_get_routes(self) -> None:
+    async def test_openapi_documents_rest_surface(self) -> None:
         async with self._test_client([]) as client:
             docs_response = await client.get('/docs')
             openapi_response = await client.get('/openapi.json')
@@ -153,12 +155,65 @@ class A2AAgentServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(docs_response.status_code, 200)
         self.assertEqual(openapi_response.status_code, 200)
         payload = openapi_response.json()
+        self.assertIn('/a2a/rest/message:send', payload['paths'])
+        self.assertIn('/a2a/rest/message:stream', payload['paths'])
+        self.assertIn('/a2a/rest/tasks/{id}:cancel', payload['paths'])
         self.assertIn('/a2a/rest/tasks', payload['paths'])
         self.assertIn('/a2a/rest/tasks/{id}', payload['paths'])
+        self.assertIn(
+            '/a2a/rest/tasks/{id}:subscribe',
+            payload['paths'],
+        )
+        self.assertIn(
+            '/a2a/rest/tasks/{id}/pushNotificationConfigs',
+            payload['paths'],
+        )
+        self.assertIn(
+            '/a2a/rest/tasks/{id}/pushNotificationConfigs/{push_id}',
+            payload['paths'],
+        )
+        self.assertIn('/a2a/rest/extendedAgentCard', payload['paths'])
+        self.assertIn('post', payload['paths']['/a2a/rest/message:send'])
         self.assertIn('get', payload['paths']['/a2a/rest/tasks'])
         self.assertIn('get', payload['paths']['/a2a/rest/tasks/{id}'])
+        self.assertEqual(
+            payload['paths']['/a2a/rest/message:send']['post'][
+                'requestBody'
+            ]['content']['application/json']['schema']['$ref'],
+            '#/components/schemas/SendMessageRequestDoc',
+        )
+        self.assertEqual(
+            payload['paths']['/a2a/rest/tasks']['get']['responses']['200'][
+                'content'
+            ]['application/json']['schema']['$ref'],
+            '#/components/schemas/ListTasksResponseDoc',
+        )
+        send_parameters = payload['paths']['/a2a/rest/message:send']['post'][
+            'parameters'
+        ]
+        self.assertIn(
+            {
+                'name': 'A2A-Version',
+                'in': 'header',
+                'required': False,
+                'schema': {
+                    'type': 'string',
+                    'description': 'A2A protocol version for this request.',
+                    'default': '1.0',
+                    'title': 'A2A-Version',
+                },
+                'description': 'A2A protocol version for this request.',
+            },
+            send_parameters,
+        )
+        stream_schema = payload['paths']['/a2a/rest/message:stream']['post'][
+            'responses'
+        ]['200']['content']['text/event-stream']['schema']
+        self.assertEqual(stream_schema['type'], 'string')
+        self.assertIn('data:', stream_schema['example'])
+        self.assertNotIn('/$defs/', json.dumps(stream_schema))
 
-    async def test_rest_send_message_returns_completed_task(self) -> None:
+    async def test_rest_send_message_defaults_swagger_calls_to_v1(self) -> None:
         stream_items = [
             {
                 'is_task_complete': False,
@@ -176,7 +231,6 @@ class A2AAgentServerTests(unittest.IsolatedAsyncioTestCase):
             response = await client.post(
                 '/a2a/rest/message:send',
                 json=self._send_message_payload('say hello'),
-                headers={'A2A-Version': '1.0'},
             )
 
         self.assertEqual(response.status_code, 200)

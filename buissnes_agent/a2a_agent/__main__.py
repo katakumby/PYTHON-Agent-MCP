@@ -2,14 +2,15 @@ import asyncio
 import logging
 import os
 import sys
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import click
 import grpc
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Header, Query, Request
+from fastapi.responses import JSONResponse, Response
 from dotenv import load_dotenv
-from google.protobuf.json_format import MessageToDict
 
 try:
     from . import patch_a2a_sdk  # noqa: F401
@@ -21,7 +22,7 @@ from a2a.compat.v0_3.grpc_handler import CompatGrpcHandler
 from a2a.server.request_handlers import DefaultRequestHandler, GrpcHandler
 from a2a.server.request_handlers.response_helpers import agent_card_to_dict
 from a2a.server.routes import create_jsonrpc_routes, create_rest_routes
-from a2a.server.routes.common import DefaultServerCallContextBuilder
+from a2a.server.routes.rest_dispatcher import RestDispatcher
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import (
     AgentCapabilities,
@@ -29,12 +30,33 @@ from a2a.types import (
     AgentInterface,
     AgentProvider,
     AgentSkill,
-    GetTaskRequest,
-    ListTasksRequest,
     a2a_pb2_grpc,
 )
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
-from a2a.utils.proto_utils import parse_params
+from starlette.routing import Route
+
+try:
+    from .rest_openapi_models import (
+        AgentCardDoc,
+        ListTasksResponseDoc,
+        SendMessageRequestDoc,
+        SendMessageResponseDoc,
+        TaskDoc,
+        TaskPushNotificationConfigDoc,
+        TaskPushNotificationConfigListResponseDoc,
+        TaskStateName,
+    )
+except ImportError:
+    from rest_openapi_models import (  # type: ignore
+        AgentCardDoc,
+        ListTasksResponseDoc,
+        SendMessageRequestDoc,
+        SendMessageResponseDoc,
+        TaskDoc,
+        TaskPushNotificationConfigDoc,
+        TaskPushNotificationConfigListResponseDoc,
+        TaskStateName,
+    )
 
 try:
     from .agent import AnalysisAgent
@@ -48,6 +70,8 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+DEFAULT_A2A_VERSION = '1.0'
+A2A_VERSION_HEADER = 'A2A-Version'
 
 
 class MissingConfigurationError(Exception):
@@ -185,38 +209,180 @@ def _build_request_handler(agent_card: AgentCard) -> DefaultRequestHandler:
     )
 
 
-def _build_call_context(request: Request):
-    context_builder = DefaultServerCallContextBuilder()
-    context = context_builder.build(request)
-    if 'tenant' in request.path_params:
-        context.tenant = request.path_params['tenant']
-    return context
+def _streaming_response_docs() -> dict[int | str, dict[str, object]]:
+    return {
+        200: {
+            'description': 'Server-Sent Events stream of A2A updates.',
+            'content': {
+                'text/event-stream': {
+                    'schema': {
+                        'type': 'string',
+                        'description': (
+                            'SSE frames where each `data:` line contains a '
+                            'JSON-encoded A2A stream response.'
+                        ),
+                        'example': (
+                            'data: {"statusUpdate":{"taskId":"task-123",'
+                            '"contextId":"ctx-123","status":{"state":"'
+                            'TASK_STATE_WORKING"}}}\n\n'
+                        ),
+                    }
+                }
+            },
+        }
+    }
 
 
-def _add_documented_rest_get_routes(
+def _with_a2a_version(request: Request, a2a_version: str | None) -> Request:
+    version = (a2a_version or DEFAULT_A2A_VERSION).strip() or DEFAULT_A2A_VERSION
+    header_name = b'a2a-version'
+    headers = []
+    replaced = False
+
+    for key, value in request.scope.get('headers', []):
+        if key.lower() == header_name:
+            headers.append((header_name, version.encode('latin-1')))
+            replaced = True
+        else:
+            headers.append((key, value))
+
+    if not replaced:
+        headers.append((header_name, version.encode('latin-1')))
+
+    request.scope['headers'] = headers
+    if hasattr(request, '_headers'):
+        delattr(request, '_headers')
+    return request
+
+
+async def _dispatch_rest_request(
+    handler: Callable[[Request], Awaitable[Response | Any]],
+    request: Request,
+    a2a_version: str,
+) -> Response | Any:
+    return await handler(_with_a2a_version(request, a2a_version))
+
+
+def _add_documented_rest_routes(
     app: FastAPI,
-    request_handler: DefaultRequestHandler,
+    rest_dispatcher: RestDispatcher,
     path_prefix: str,
 ) -> None:
     rest_tag = 'A2A REST'
 
-    @app.get(
-        f'{path_prefix}/tasks',
+    @app.post(
+        f'{path_prefix}/message:send',
         tags=[rest_tag],
-        summary='List A2A tasks',
-        description='REST GET endpoint for listing tasks. Query parameters follow the A2A specification.',
+        summary='Send an A2A message',
+        description='Submit a message over the HTTP+JSON binding and wait for the final response.',
+        response_model=SendMessageResponseDoc,
     )
-    async def rest_list_tasks(request: Request) -> JSONResponse:
-        context = _build_call_context(request)
-        params = ListTasksRequest()
-        parse_params(request.query_params, params)
-        result = await request_handler.on_list_tasks(params, context)
-        return JSONResponse(
-            content=MessageToDict(
-                result,
-                preserving_proto_field_name=False,
-                always_print_fields_with_no_presence=True,
-            )
+    async def rest_message_send(
+        payload: SendMessageRequestDoc,
+        request: Request,
+        a2a_version: str = Header(
+            default=DEFAULT_A2A_VERSION,
+            alias=A2A_VERSION_HEADER,
+            description='A2A protocol version for this request.',
+        ),
+    ) -> JSONResponse:
+        _ = payload
+        return await _dispatch_rest_request(
+            rest_dispatcher.on_message_send,
+            request,
+            a2a_version,
+        )
+
+    @app.post(
+        f'{path_prefix}/message:stream',
+        tags=[rest_tag],
+        summary='Send an A2A message with streaming updates',
+        description='Submit a message over the HTTP+JSON binding and receive task updates as server-sent events.',
+        responses=_streaming_response_docs(),
+    )
+    async def rest_message_stream(
+        payload: SendMessageRequestDoc,
+        request: Request,
+        a2a_version: str = Header(
+            default=DEFAULT_A2A_VERSION,
+            alias=A2A_VERSION_HEADER,
+            description='A2A protocol version for this request.',
+        ),
+    ):
+        _ = payload
+        return await _dispatch_rest_request(
+            rest_dispatcher.on_message_send_stream,
+            request,
+            a2a_version,
+        )
+
+    @app.post(
+        f'{path_prefix}/tasks/{{id}}:cancel',
+        tags=[rest_tag],
+        summary='Cancel an A2A task',
+        description='Cancel a running task by id.',
+        response_model=TaskDoc,
+    )
+    async def rest_cancel_task(
+        id: str,
+        request: Request,
+        a2a_version: str = Header(
+            default=DEFAULT_A2A_VERSION,
+            alias=A2A_VERSION_HEADER,
+            description='A2A protocol version for this request.',
+        ),
+    ) -> JSONResponse:
+        _ = id
+        return await _dispatch_rest_request(
+            rest_dispatcher.on_cancel_task,
+            request,
+            a2a_version,
+        )
+
+    @app.get(
+        f'{path_prefix}/tasks/{{id}}:subscribe',
+        tags=[rest_tag],
+        summary='Subscribe to an A2A task',
+        description='Receive task updates as server-sent events.',
+        responses=_streaming_response_docs(),
+    )
+    async def rest_subscribe_task_get(
+        id: str,
+        request: Request,
+        a2a_version: str = Header(
+            default=DEFAULT_A2A_VERSION,
+            alias=A2A_VERSION_HEADER,
+            description='A2A protocol version for this request.',
+        ),
+    ):
+        _ = id
+        return await _dispatch_rest_request(
+            rest_dispatcher.on_subscribe_to_task,
+            request,
+            a2a_version,
+        )
+
+    @app.post(
+        f'{path_prefix}/tasks/{{id}}:subscribe',
+        tags=[rest_tag],
+        summary='Subscribe to an A2A task',
+        description='Receive task updates as server-sent events.',
+        responses=_streaming_response_docs(),
+    )
+    async def rest_subscribe_task_post(
+        id: str,
+        request: Request,
+        a2a_version: str = Header(
+            default=DEFAULT_A2A_VERSION,
+            alias=A2A_VERSION_HEADER,
+            description='A2A protocol version for this request.',
+        ),
+    ):
+        _ = id
+        return await _dispatch_rest_request(
+            rest_dispatcher.on_subscribe_to_task,
+            request,
+            a2a_version,
         )
 
     @app.get(
@@ -224,23 +390,219 @@ def _add_documented_rest_get_routes(
         tags=[rest_tag],
         summary='Get A2A task',
         description='REST GET endpoint for fetching a task by id.',
+        response_model=TaskDoc,
     )
-    async def rest_get_task(id: str, request: Request) -> JSONResponse:
-        context = _build_call_context(request)
-        params = GetTaskRequest(id=id)
-        parse_params(request.query_params, params)
-        task = await request_handler.on_get_task(params, context)
-        if not task:
-            raise HTTPException(status_code=404, detail='Task not found')
-        return JSONResponse(
-            content=MessageToDict(task, preserving_proto_field_name=False)
+    async def rest_get_task(
+        id: str,
+        request: Request,
+        a2a_version: str = Header(
+            default=DEFAULT_A2A_VERSION,
+            alias=A2A_VERSION_HEADER,
+            description='A2A protocol version for this request.',
+        ),
+        historyLength: int | None = Query(
+            default=None,
+            alias='historyLength',
+            ge=0,
+        ),
+    ) -> JSONResponse:
+        _ = (id, historyLength)
+        return await _dispatch_rest_request(
+            rest_dispatcher.on_get_task,
+            request,
+            a2a_version,
         )
+
+    @app.get(
+        f'{path_prefix}/tasks',
+        tags=[rest_tag],
+        summary='List A2A tasks',
+        description='List tasks for the agent with optional filtering and pagination.',
+        response_model=ListTasksResponseDoc,
+    )
+    async def rest_list_tasks(
+        request: Request,
+        a2a_version: str = Header(
+            default=DEFAULT_A2A_VERSION,
+            alias=A2A_VERSION_HEADER,
+            description='A2A protocol version for this request.',
+        ),
+        contextId: str | None = Query(default=None, alias='contextId'),
+        status: TaskStateName | None = Query(default=None),
+        pageSize: int | None = Query(
+            default=None,
+            alias='pageSize',
+            ge=1,
+        ),
+        pageToken: str | None = Query(default=None, alias='pageToken'),
+        historyLength: int | None = Query(
+            default=None,
+            alias='historyLength',
+            ge=0,
+        ),
+        statusTimestampAfter: str | None = Query(
+            default=None,
+            alias='statusTimestampAfter',
+            description='RFC 3339 timestamp filter.',
+        ),
+        includeArtifacts: bool | None = Query(
+            default=None,
+            alias='includeArtifacts',
+        ),
+    ) -> JSONResponse:
+        _ = (
+            contextId,
+            status,
+            pageSize,
+            pageToken,
+            historyLength,
+            statusTimestampAfter,
+            includeArtifacts,
+        )
+        return await _dispatch_rest_request(
+            rest_dispatcher.list_tasks,
+            request,
+            a2a_version,
+        )
+
+    @app.post(
+        f'{path_prefix}/tasks/{{id}}/pushNotificationConfigs',
+        tags=[rest_tag],
+        summary='Create task push notification config',
+        description='Create or replace a push notification config for a task.',
+        response_model=TaskPushNotificationConfigDoc,
+    )
+    async def rest_set_push_notification(
+        id: str,
+        payload: TaskPushNotificationConfigDoc,
+        request: Request,
+        a2a_version: str = Header(
+            default=DEFAULT_A2A_VERSION,
+            alias=A2A_VERSION_HEADER,
+            description='A2A protocol version for this request.',
+        ),
+    ) -> JSONResponse:
+        _ = (id, payload)
+        return await _dispatch_rest_request(
+            rest_dispatcher.set_push_notification,
+            request,
+            a2a_version,
+        )
+
+    @app.get(
+        f'{path_prefix}/tasks/{{id}}/pushNotificationConfigs',
+        tags=[rest_tag],
+        summary='List task push notification configs',
+        description='List push notification configs for a task.',
+        response_model=TaskPushNotificationConfigListResponseDoc,
+    )
+    async def rest_list_push_notifications(
+        id: str,
+        request: Request,
+        a2a_version: str = Header(
+            default=DEFAULT_A2A_VERSION,
+            alias=A2A_VERSION_HEADER,
+            description='A2A protocol version for this request.',
+        ),
+    ) -> JSONResponse:
+        _ = id
+        return await _dispatch_rest_request(
+            rest_dispatcher.list_push_notifications,
+            request,
+            a2a_version,
+        )
+
+    @app.get(
+        f'{path_prefix}/tasks/{{id}}/pushNotificationConfigs/{{push_id}}',
+        tags=[rest_tag],
+        summary='Get task push notification config',
+        description='Get a push notification config for a task.',
+        response_model=TaskPushNotificationConfigDoc,
+    )
+    async def rest_get_push_notification(
+        id: str,
+        push_id: str,
+        request: Request,
+        a2a_version: str = Header(
+            default=DEFAULT_A2A_VERSION,
+            alias=A2A_VERSION_HEADER,
+            description='A2A protocol version for this request.',
+        ),
+    ) -> JSONResponse:
+        _ = (id, push_id)
+        return await _dispatch_rest_request(
+            rest_dispatcher.get_push_notification,
+            request,
+            a2a_version,
+        )
+
+    @app.delete(
+        f'{path_prefix}/tasks/{{id}}/pushNotificationConfigs/{{push_id}}',
+        tags=[rest_tag],
+        summary='Delete task push notification config',
+        description='Delete a push notification config for a task.',
+        response_model=dict[str, object],
+    )
+    async def rest_delete_push_notification(
+        id: str,
+        push_id: str,
+        request: Request,
+        a2a_version: str = Header(
+            default=DEFAULT_A2A_VERSION,
+            alias=A2A_VERSION_HEADER,
+            description='A2A protocol version for this request.',
+        ),
+    ) -> JSONResponse:
+        _ = (id, push_id)
+        return await _dispatch_rest_request(
+            rest_dispatcher.delete_push_notification,
+            request,
+            a2a_version,
+        )
+
+    @app.get(
+        f'{path_prefix}/extendedAgentCard',
+        tags=[rest_tag],
+        summary='Get extended agent card',
+        description='Fetch the authenticated extended agent card when enabled.',
+        response_model=AgentCardDoc,
+    )
+    async def rest_get_extended_agent_card(
+        request: Request,
+        a2a_version: str = Header(
+            default=DEFAULT_A2A_VERSION,
+            alias=A2A_VERSION_HEADER,
+            description='A2A protocol version for this request.',
+        ),
+    ) -> JSONResponse:
+        return await _dispatch_rest_request(
+            rest_dispatcher.handle_authenticated_agent_card,
+            request,
+            a2a_version,
+        )
+
+
+def _add_compat_rest_routes(
+    app: FastAPI,
+    request_handler: DefaultRequestHandler,
+    path_prefix: str,
+) -> None:
+    compat_routes = create_rest_routes(
+        request_handler=request_handler,
+        path_prefix=path_prefix,
+        enable_v0_3_compat=True,
+    )
+    for route in compat_routes:
+        route_path = getattr(route, 'path', '')
+        if '/v1/' in route_path:
+            app.routes.append(route)
 
 
 def _build_app(
     agent_card: AgentCard,
     request_handler: DefaultRequestHandler,
 ) -> FastAPI:
+    rest_dispatcher = RestDispatcher(request_handler=request_handler)
     app = FastAPI(
         title='Deep Research Agent',
         description='A2A server exposing JSON-RPC, HTTP+JSON REST, and gRPC transports.',
@@ -265,11 +627,17 @@ def _build_app(
         tags=['A2A Discovery'],
         summary='Get agent card',
         description='Returns the published agent card for discovery.',
+        response_model=AgentCardDoc,
     )
     async def get_agent_card() -> JSONResponse:
         return JSONResponse(agent_card_to_dict(agent_card))
 
-    _add_documented_rest_get_routes(
+    _add_documented_rest_routes(
+        app=app,
+        rest_dispatcher=rest_dispatcher,
+        path_prefix='/a2a/rest',
+    )
+    _add_compat_rest_routes(
         app=app,
         request_handler=request_handler,
         path_prefix='/a2a/rest',
@@ -279,13 +647,6 @@ def _build_app(
         create_jsonrpc_routes(
             request_handler=request_handler,
             rpc_url='/a2a/jsonrpc',
-            enable_v0_3_compat=True,
-        )
-    )
-    app.routes.extend(
-        create_rest_routes(
-            request_handler=request_handler,
-            path_prefix='/a2a/rest',
             enable_v0_3_compat=True,
         )
     )
@@ -318,6 +679,19 @@ def _build_grpc_server(
         a2a_pb2_grpc.add_A2AServiceServicer_to_server(servicer, server)
 
     return server, bound_port
+
+
+async def _shutdown_grpc_servers(
+    *servers: grpc.aio.Server | None,
+) -> None:
+    for server in servers:
+        if server is None:
+            continue
+        try:
+            await asyncio.shield(server.stop(0))
+            await asyncio.shield(server.wait_for_termination(timeout=5))
+        except Exception:
+            logger.exception('Error while shutting down gRPC server')
 
 
 async def serve(
@@ -376,10 +750,10 @@ async def serve(
     try:
         await uvicorn_server.serve()
     finally:
-        if grpc_server is not None:
-            await grpc_server.stop(0)
-        if compat_grpc_server is not None:
-            await compat_grpc_server.stop(0)
+        await _shutdown_grpc_servers(grpc_server, compat_grpc_server)
+        grpc_server = None
+        compat_grpc_server = None
+        await asyncio.sleep(0)
 
 
 @click.command()
@@ -426,4 +800,8 @@ def main(
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main(standalone_mode=False)
+    except (KeyboardInterrupt, click.Abort):
+        logger.info('Shutdown requested.')
+        sys.exit(0)
