@@ -14,6 +14,12 @@ from .strategies import (
     SemanticStrategy
 )
 from ...MetadataModels import ChunkMetadata
+from ..source_metadata import (
+    SOURCE_CHAR_END_METADATA_KEY,
+    SOURCE_CHAR_START_METADATA_KEY,
+    SOURCE_ENCODING_METADATA_KEY,
+    SOURCE_TEXT_METADATA_KEY,
+)
 
 # Importy interfejsu i strategii
 
@@ -91,23 +97,18 @@ class LangChainChunker:
         # --- Przekazujemy listę dokumentów do split_documents ---
         strategy = self._get_strategy()
         splits: List[Document] = strategy.split_documents(documents)
+        self._normalize_split_metadata(splits)
 
         # Krok 2: Smart Metadata Cleanup
         # Ponieważ metadane pliku zostały już scalone w Orkiestratorze, robimy tu tylko
         # ewentualną naprawę kluczy (np. Langchain czasami tworzy klucz "page" zamiast "page_number").
-        for doc in splits:
-            if "page" in doc.metadata:
-                if doc.metadata.get("page_number") is None:
-                    doc.metadata["page_number"] = doc.metadata.pop("page")
-                else:
-                    doc.metadata.pop("page")  # Usuwamy ewentualny duplikat
-
         # Krok 3: Secondary Split (Hard Limit / Bezpiecznik)
         # Strategie logiczne (Header/Semantic) mogą zwrócić chunk 5000 znaków, jeśli rozdział był długi.
         # Metoda _enforce_limit tnie go na mniejsze kawałki, zachowując metadane.
         final_documents = splits
         if self.chunk_size > 0:
             final_documents = self._enforce_limit(splits)
+            self._normalize_split_metadata(final_documents)
 
         # Krok 4: Formatowanie wyniku
         results = []
@@ -124,10 +125,23 @@ class LangChainChunker:
 
             # C. Separacja pól znanych od "extra"
             # Definiujemy, które klucze mapujemy wprost na dataclass
-            known_keys = {"source", "title", "url", "extension", "domain", "tags", "page_number"}
+            known_keys = {
+                "source",
+                "title",
+                "url",
+                "extension",
+                "domain",
+                "tags",
+                "page_number",
+                "start_byte",
+                "end_byte",
+            }
 
             # Wyciągamy known fields
             schema_data = {k: meta_dict.get(k) for k in known_keys}
+            start_byte, end_byte = self._resolve_byte_range(meta_dict)
+            schema_data["start_byte"] = start_byte
+            schema_data["end_byte"] = end_byte
 
             # Ustawiamy domyślne source jeśli puste
             if not schema_data["source"]:
@@ -135,7 +149,17 @@ class LangChainChunker:
 
             # Wszystko inne trafia do extras (np. specyficzne metadane z PDF)
             # Pomijamy klucze techniczne, które generujemy sami lub są śmieciami
-            exclude_keys = known_keys | {"phrase", "phrase_metadata_id", "_chunk_id", "loc"}
+            exclude_keys = known_keys | {
+                "phrase",
+                "phrase_metadata_id",
+                "_chunk_id",
+                "loc",
+                "start_index",
+                SOURCE_TEXT_METADATA_KEY,
+                SOURCE_ENCODING_METADATA_KEY,
+                SOURCE_CHAR_START_METADATA_KEY,
+                SOURCE_CHAR_END_METADATA_KEY,
+            }
             extras = {k: v for k, v in meta_dict.items() if k not in exclude_keys}
 
             # D. Instancjalizacja Dataclass
@@ -150,6 +174,8 @@ class LangChainChunker:
                 domain=schema_data["domain"],
                 tags=schema_data["tags"] or [],
                 page_number=schema_data["page_number"],
+                start_byte=schema_data["start_byte"],
+                end_byte=schema_data["end_byte"],
 
                 extra_data=extras
             )
@@ -179,7 +205,9 @@ class LangChainChunker:
         recursive_cutter = RecursiveCharacterTextSplitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
-            separators=["\n\n", "\n", ".", " ", ""]  # Hierarchia cięcia
+            separators=["\n\n", "\n", ".", " ", ""],  # Hierarchia cięcia
+            add_start_index=True,
+            strip_whitespace=False,
         )
 
         for doc in documents:
@@ -193,3 +221,48 @@ class LangChainChunker:
                 final_docs.append(doc)
 
         return final_docs
+
+    def _normalize_split_metadata(self, documents: List[Document]) -> None:
+        for doc in documents:
+            if "page" in doc.metadata:
+                if doc.metadata.get("page_number") is None:
+                    doc.metadata["page_number"] = doc.metadata.pop("page")
+                else:
+                    doc.metadata.pop("page")
+
+            local_start = doc.metadata.pop("start_index", None)
+            source_char_start = doc.metadata.get(SOURCE_CHAR_START_METADATA_KEY)
+            if isinstance(local_start, int) and isinstance(source_char_start, int):
+                global_start = source_char_start + local_start
+                doc.metadata[SOURCE_CHAR_START_METADATA_KEY] = global_start
+                doc.metadata[SOURCE_CHAR_END_METADATA_KEY] = (
+                    global_start + len(doc.page_content)
+                )
+
+    def _resolve_byte_range(
+        self, metadata: Dict[str, Any]
+    ) -> tuple[int | None, int | None]:
+        source_text = metadata.get(SOURCE_TEXT_METADATA_KEY)
+        source_encoding = metadata.get(SOURCE_ENCODING_METADATA_KEY)
+        start_char = metadata.get(SOURCE_CHAR_START_METADATA_KEY)
+        end_char = metadata.get(SOURCE_CHAR_END_METADATA_KEY)
+
+        if not isinstance(source_text, str):
+            return None, None
+        if not isinstance(source_encoding, str):
+            return None, None
+        if not isinstance(start_char, int) or not isinstance(end_char, int):
+            return None, None
+        if start_char < 0 or end_char <= start_char:
+            return None, None
+
+        try:
+            start_byte = len(source_text[:start_char].encode(source_encoding))
+            end_byte = len(source_text[:end_char].encode(source_encoding)) - 1
+        except UnicodeEncodeError:
+            return None, None
+
+        if end_byte < start_byte:
+            return None, None
+
+        return start_byte, end_byte

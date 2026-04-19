@@ -14,6 +14,8 @@ class BaseMetadata:
     domain: Optional[str] = "general"
     tags: List[str] = field(default_factory=list)
     page_number: Optional[int] = None
+    start_byte: Optional[int] = None
+    end_byte: Optional[int] = None
 
     def _clean_dict(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Pomocnicza metoda usuwająca None z wyników. Zostawia przypisane wartości, w tym page_number."""

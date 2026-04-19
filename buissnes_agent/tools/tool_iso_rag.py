@@ -185,18 +185,34 @@ def _format_search_results(points) -> str:
 
         page = payload.get("page_number")
         page_info = f", Strona: {page}" if page else ""
+        start_byte = payload.get("start_byte")
+        end_byte = payload.get("end_byte")
+        byte_range = None
+        if isinstance(start_byte, int):
+            byte_range = (
+                f"bytes={start_byte}-"
+                if not isinstance(end_byte, int)
+                else f"bytes={start_byte}-{end_byte}"
+            )
 
-        entry = (
-            f"--- DOKUMENT {i} (Relewancja: {point.score:.4f}) ---\n"
-            f"Tytuł: {title}\n"
-            f"Źródło (plik): {source_path}{page_info}\n"
-            f"URL: {url}\n"
-            f"Domena: {domain}\n"
-            f"Typ: {extension}\n"
-            f"Tagi: {tags_str}\n"
-            f"ID Fragmentu: {meta_id}\n"
-            f"Treść:\n{content.strip()}"
+        entry_lines = [
+            f"--- DOKUMENT {i} (Relewancja: {point.score:.4f}) ---",
+            f"Tytuł: {title}",
+            f"Źródło (plik): {source_path}{page_info}",
+        ]
+        if byte_range:
+            entry_lines.append(f"Zakres bajtów: {byte_range}")
+        entry_lines.extend(
+            [
+                f"URL: {url}",
+                f"Domena: {domain}",
+                f"Typ: {extension}",
+                f"Tagi: {tags_str}",
+                f"ID Fragmentu: {meta_id}",
+                f"Treść:\n{content.strip()}",
+            ]
         )
+        entry = "\n".join(entry_lines)
         formatted_output.append(entry)
 
     return "\n\n".join(formatted_output)
